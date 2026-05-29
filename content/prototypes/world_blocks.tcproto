@@ -1,0 +1,38 @@
+# DM-like content declarations for world blocks.
+# Paths inherit vars from their parent path, so /block/dirt inherits /block defaults.
+
+/block
+name = "Block"
+desc = ""
+solid = true
+block_texture = ""
+block_model = "/models/blocks/cube"
+
+/block/air
+numeric_id = 0
+name = "Air"
+desc = "Empty space."
+solid = false
+block_texture = ""
+block_model = ""
+
+/block/grass
+numeric_id = 1
+name = "Grass"
+desc = "Grass-covered dirt."
+block_top_texture = "/textures/block/grass_block_top.png"
+block_side_texture = "/textures/block/grass_block_side.png"
+block_bottom_texture = "/textures/block/dirt.png"
+
+/block/dirt
+numeric_id = 2
+name = "Dirt"
+desc = "Regular dirt."
+block_texture = "/textures/block/dirt.png"
+block_model = "/models/blocks/dirt"
+
+/block/stone
+numeric_id = 3
+name = "Stone"
+desc = "Common stone."
+block_texture = "/textures/block/stone.png"

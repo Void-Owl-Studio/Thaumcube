@@ -3,67 +3,59 @@ extends RefCounted
 
 const ChunkDataScript := preload("res://scripts/world/chunk_data.gd")
 
-const FACE_DEFINITIONS := [
-	{
-		"normal": Vector3i.RIGHT,
-		"neighbor_offset": Vector3i.RIGHT,
-		"vertices": [
-			Vector3(1, 0, 0),
-			Vector3(1, 1, 0),
-			Vector3(1, 1, 1),
-			Vector3(1, 0, 1)
-		]
-	},
-	{
-		"normal": Vector3i.LEFT,
-		"neighbor_offset": Vector3i.LEFT,
-		"vertices": [
-			Vector3(0, 0, 1),
-			Vector3(0, 1, 1),
-			Vector3(0, 1, 0),
-			Vector3(0, 0, 0)
-		]
-	},
-	{
-		"normal": Vector3i.UP,
-		"neighbor_offset": Vector3i.UP,
-		"vertices": [
-			Vector3(0, 1, 1),
-			Vector3(1, 1, 1),
-			Vector3(1, 1, 0),
-			Vector3(0, 1, 0)
-		]
-	},
-	{
-		"normal": Vector3i.DOWN,
-		"neighbor_offset": Vector3i.DOWN,
-		"vertices": [
-			Vector3(0, 0, 0),
-			Vector3(1, 0, 0),
-			Vector3(1, 0, 1),
-			Vector3(0, 0, 1)
-		]
-	},
-	{
-		"normal": Vector3i.BACK,
-		"neighbor_offset": Vector3i.BACK,
-		"vertices": [
-			Vector3(0, 0, 1),
-			Vector3(1, 0, 1),
-			Vector3(1, 1, 1),
-			Vector3(0, 1, 1)
-		]
-	},
-	{
-		"normal": Vector3i.FORWARD,
-		"neighbor_offset": Vector3i.FORWARD,
-		"vertices": [
-			Vector3(1, 0, 0),
-			Vector3(0, 0, 0),
-			Vector3(0, 1, 0),
-			Vector3(1, 1, 0)
-		]
-	}
+const FACE_RIGHT := 0
+const FACE_LEFT := 1
+const FACE_UP := 2
+const FACE_DOWN := 3
+const FACE_BACK := 4
+const FACE_FORWARD := 5
+
+const FACE_NORMALS := [
+	Vector3i.RIGHT,
+	Vector3i.LEFT,
+	Vector3i.UP,
+	Vector3i.DOWN,
+	Vector3i.BACK,
+	Vector3i.FORWARD
+]
+
+const FACE_VERTICES := [
+	[
+		Vector3(1, 0, 0),
+		Vector3(1, 1, 0),
+		Vector3(1, 1, 1),
+		Vector3(1, 0, 1)
+	],
+	[
+		Vector3(0, 0, 1),
+		Vector3(0, 1, 1),
+		Vector3(0, 1, 0),
+		Vector3(0, 0, 0)
+	],
+	[
+		Vector3(0, 1, 1),
+		Vector3(1, 1, 1),
+		Vector3(1, 1, 0),
+		Vector3(0, 1, 0)
+	],
+	[
+		Vector3(0, 0, 0),
+		Vector3(1, 0, 0),
+		Vector3(1, 0, 1),
+		Vector3(0, 0, 1)
+	],
+	[
+		Vector3(0, 0, 1),
+		Vector3(1, 0, 1),
+		Vector3(1, 1, 1),
+		Vector3(0, 1, 1)
+	],
+	[
+		Vector3(1, 0, 0),
+		Vector3(0, 0, 0),
+		Vector3(0, 1, 0),
+		Vector3(1, 1, 0)
+	]
 ]
 
 const FACE_UVS := [
@@ -76,6 +68,8 @@ const FACE_UVS := [
 var _block_registry
 var _atlas
 var _material: StandardMaterial3D
+var _solid_cache: Dictionary = {}
+var _uv_rect_cache: Dictionary = {}
 
 
 func _init(block_registry, atlas) -> void:
@@ -98,36 +92,22 @@ func build_mesh(chunk_data, generator = null) -> ArrayMesh:
 	for local_x in range(ChunkDataScript.SIZE_X):
 		for local_y in range(ChunkDataScript.SIZE_Y):
 			for local_z in range(ChunkDataScript.SIZE_Z):
-				var local_position := Vector3i(local_x, local_y, local_z)
-				var block_id = chunk_data.get_block(local_position)
-				if not _block_registry.is_solid(block_id):
+				var block_id: int = chunk_data.get_block_at(local_x, local_y, local_z)
+				if not _is_solid(block_id):
 					continue
 
-				var definition = _block_registry.get_definition(block_id)
-				for face_definition in FACE_DEFINITIONS:
-					var neighbor_position: Vector3i = local_position + face_definition.neighbor_offset
-					var neighbor_block_id := _get_neighbor_block_id(chunk_data, neighbor_position, generator)
-					if _block_registry.is_solid(neighbor_block_id):
-						continue
-
-					var face_normal: Vector3i = face_definition.normal
-					var uv_rect = _atlas.get_uv_rect(definition.get_texture_path_for_face(face_normal))
-					var base_position := Vector3(local_x, local_y, local_z)
-
-					for vertex_index in 4:
-						vertices.append(base_position + face_definition.vertices[vertex_index])
-						normals.append(Vector3(face_normal))
-						uvs.append(_remap_uv(FACE_UVS[vertex_index], uv_rect))
-
-					indices.append_array([
-						next_index,
-						next_index + 1,
-						next_index + 2,
-						next_index,
-						next_index + 2,
-						next_index + 3
-					])
-					next_index += 4
+				if not _is_neighbor_solid(chunk_data, local_x + 1, local_y, local_z, generator):
+					next_index = _append_face(FACE_RIGHT, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
+				if not _is_neighbor_solid(chunk_data, local_x - 1, local_y, local_z, generator):
+					next_index = _append_face(FACE_LEFT, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
+				if not _is_neighbor_solid(chunk_data, local_x, local_y + 1, local_z, generator):
+					next_index = _append_face(FACE_UP, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
+				if not _is_neighbor_solid(chunk_data, local_x, local_y - 1, local_z, generator):
+					next_index = _append_face(FACE_DOWN, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
+				if not _is_neighbor_solid(chunk_data, local_x, local_y, local_z + 1, generator):
+					next_index = _append_face(FACE_BACK, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
+				if not _is_neighbor_solid(chunk_data, local_x, local_y, local_z - 1, generator):
+					next_index = _append_face(FACE_FORWARD, local_x, local_y, local_z, block_id, vertices, normals, uvs, indices, next_index)
 
 	var mesh := ArrayMesh.new()
 	if vertices.is_empty():
@@ -144,20 +124,68 @@ func build_mesh(chunk_data, generator = null) -> ArrayMesh:
 	return mesh
 
 
-func _get_neighbor_block_id(chunk_data, neighbor_position: Vector3i, generator) -> int:
-	if chunk_data.is_in_bounds(neighbor_position):
-		return chunk_data.get_block(neighbor_position)
+func _is_neighbor_solid(chunk_data, local_x: int, local_y: int, local_z: int, generator) -> bool:
+	if chunk_data.is_in_bounds_at(local_x, local_y, local_z):
+		return _is_solid(chunk_data.get_block_at(local_x, local_y, local_z))
 
 	if generator == null:
-		return ChunkDataScript.AIR_BLOCK_ID
+		return false
 
 	var world_origin: Vector3 = chunk_data.get_world_origin()
 	var world_position := Vector3i(
-		int(world_origin.x) + neighbor_position.x,
-		int(world_origin.y) + neighbor_position.y,
-		int(world_origin.z) + neighbor_position.z
+		int(world_origin.x) + local_x,
+		int(world_origin.y) + local_y,
+		int(world_origin.z) + local_z
 	)
-	return generator.get_block_id_at(world_position)
+	return _is_solid(generator.get_block_id_at(world_position))
+
+
+func _append_face(
+	face_index: int,
+	local_x: int,
+	local_y: int,
+	local_z: int,
+	block_id: int,
+	vertices: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	indices: PackedInt32Array,
+	next_index: int
+) -> int:
+	var base_position := Vector3(local_x, local_y, local_z)
+	var face_vertices: Array = FACE_VERTICES[face_index]
+	var face_normal := Vector3(FACE_NORMALS[face_index])
+	var uv_rect: Rect2 = _get_uv_rect(block_id, face_index)
+
+	for vertex_index in 4:
+		vertices.append(base_position + face_vertices[vertex_index])
+		normals.append(face_normal)
+		uvs.append(_remap_uv(FACE_UVS[vertex_index], uv_rect))
+
+	indices.append(next_index)
+	indices.append(next_index + 1)
+	indices.append(next_index + 2)
+	indices.append(next_index)
+	indices.append(next_index + 2)
+	indices.append(next_index + 3)
+	return next_index + 4
+
+
+func _is_solid(block_id: int) -> bool:
+	if not _solid_cache.has(block_id):
+		_solid_cache[block_id] = _block_registry.is_solid(block_id)
+	return _solid_cache[block_id]
+
+
+func _get_uv_rect(block_id: int, face_index: int) -> Rect2:
+	var cache_key := block_id * 6 + face_index
+	if _uv_rect_cache.has(cache_key):
+		return _uv_rect_cache[cache_key]
+
+	var definition = _block_registry.get_definition(block_id)
+	var uv_rect = _atlas.get_uv_rect(definition.get_texture_path_for_face(FACE_NORMALS[face_index]))
+	_uv_rect_cache[cache_key] = uv_rect
+	return uv_rect
 
 
 func _remap_uv(base_uv: Vector2, uv_rect: Rect2) -> Vector2:

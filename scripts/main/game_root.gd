@@ -3,6 +3,11 @@ extends Node3D
 const WORLD_SCENE := preload("res://scenes/world/world_manager.tscn")
 const PLAYER_SCENE := preload("res://scenes/player/player_controller.tscn")
 
+@export var show_debug_overlay := true
+
+var _player: Node3D
+var _debug_label: Label
+
 
 func _ready() -> void:
 	_ensure_input_actions()
@@ -13,16 +18,51 @@ func _ready() -> void:
 	world.name = "World"
 	add_child(world)
 
-	var player := PLAYER_SCENE.instantiate()
-	player.name = "Player"
-	add_child(player)
+	_player = PLAYER_SCENE.instantiate()
+	_player.name = "Player"
+	add_child(_player)
 	if world.has_method("get_spawn_position"):
-		player.position = world.get_spawn_position()
+		_player.position = world.get_spawn_position()
 	else:
-		player.position = Vector3(8.5, 20.0, 8.5)
+		_player.position = Vector3(8.5, 20.0, 8.5)
 
 	if world.has_method("bind_player"):
-		world.bind_player(player)
+		world.bind_player(_player)
+	if _player.has_method("bind_world"):
+		_player.bind_world(world)
+
+	if show_debug_overlay:
+		_create_debug_overlay()
+
+
+func _process(_delta: float) -> void:
+	if _debug_label == null or _player == null:
+		return
+
+	var camera := get_viewport().get_camera_3d()
+	var player_input := Vector2.ZERO
+	var player_velocity := Vector3.ZERO
+	if _player.has_method("get_debug_movement_input"):
+		player_input = _player.get_debug_movement_input()
+	if "velocity" in _player:
+		player_velocity = _player.velocity
+
+	_debug_label.text = (
+		"Player pos: %s\n"
+		+ "Velocity: %s\n"
+		+ "Input: %s\n"
+		+ "Camera: %s\n"
+		+ "Focus keys: W=%s A=%s S=%s D=%s"
+	) % [
+		_format_vector3(_player.global_position),
+		_format_vector3(player_velocity),
+		player_input,
+		camera.get_path() if camera != null else "none",
+		Input.is_physical_key_pressed(KEY_W),
+		Input.is_physical_key_pressed(KEY_A),
+		Input.is_physical_key_pressed(KEY_S),
+		Input.is_physical_key_pressed(KEY_D)
+	]
 
 
 func _ensure_input_actions() -> void:
@@ -32,6 +72,7 @@ func _ensure_input_actions() -> void:
 	_register_key_action("move_right", KEY_D)
 	_register_key_action("jump", KEY_SPACE)
 	_register_key_action("toggle_mouse_capture", KEY_ESCAPE)
+	_register_mouse_action("break_block", MOUSE_BUTTON_LEFT)
 
 
 func _register_key_action(action_name: StringName, keycode: Key) -> void:
@@ -43,8 +84,38 @@ func _register_key_action(action_name: StringName, keycode: Key) -> void:
 			return
 
 	var event := InputEventKey.new()
+	event.keycode = keycode
 	event.physical_keycode = keycode
 	InputMap.action_add_event(action_name, event)
+
+
+func _register_mouse_action(action_name: StringName, button_index: MouseButton) -> void:
+	if not InputMap.has_action(action_name):
+		InputMap.add_action(action_name)
+
+	for existing_event in InputMap.action_get_events(action_name):
+		if existing_event is InputEventMouseButton and existing_event.button_index == button_index:
+			return
+
+	var event := InputEventMouseButton.new()
+	event.button_index = button_index
+	InputMap.action_add_event(action_name, event)
+
+
+func _create_debug_overlay() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "DebugOverlay"
+	add_child(layer)
+
+	_debug_label = Label.new()
+	_debug_label.name = "InputDebug"
+	_debug_label.position = Vector2(12.0, 12.0)
+	_debug_label.add_theme_font_size_override("font_size", 16)
+	layer.add_child(_debug_label)
+
+
+func _format_vector3(value: Vector3) -> String:
+	return "(%.2f, %.2f, %.2f)" % [value.x, value.y, value.z]
 
 
 func _create_environment() -> void:
