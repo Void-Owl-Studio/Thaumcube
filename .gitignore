@@ -1,0 +1,35 @@
+# Godot editor/import cache
+.godot/
+
+# Local app data created by the desktop environment/editor
+.appdata/
+.localappdata/
+
+# Godot export artifacts
+/builds/
+/exports/
+/*.pck
+/*.apk
+/*.aab
+/*.ipa
+/*.exe
+/*.x86_64
+/*.x86_32
+
+# Mono/.NET build artifacts
+.mono/
+bin/
+obj/
+*.csproj.user
+*.suo
+
+# IDE/editor files
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+
+# OS noise
+Thumbs.db
+Desktop.ini

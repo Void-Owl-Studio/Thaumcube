@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/player/player_controller.gd" id="1_6aj4n"]
+
+[node name="PlayerController" type="CharacterBody3D"]
+script = ExtResource("1_6aj4n")
+
+[node name="Head" type="Node3D" parent="."]
+position = Vector3(0, 1.6, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Head"]
+current = true
+far = 500.0
+
+[node name="ModelAnchor" type="Node3D" parent="."]
+position = Vector3(0, 0.1, 0)
