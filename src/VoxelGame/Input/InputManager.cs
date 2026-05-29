@@ -136,6 +136,23 @@ public sealed class InputManager : IDisposable
         };
     }
 
+    public bool IsNumberPressedThisFrame(int slot)
+    {
+        return slot switch
+        {
+            1 => IsKeyPressedThisFrame(Key.Number1),
+            2 => IsKeyPressedThisFrame(Key.Number2),
+            3 => IsKeyPressedThisFrame(Key.Number3),
+            4 => IsKeyPressedThisFrame(Key.Number4),
+            5 => IsKeyPressedThisFrame(Key.Number5),
+            6 => IsKeyPressedThisFrame(Key.Number6),
+            7 => IsKeyPressedThisFrame(Key.Number7),
+            8 => IsKeyPressedThisFrame(Key.Number8),
+            9 => IsKeyPressedThisFrame(Key.Number9),
+            _ => false
+        };
+    }
+
     public void Dispose()
     {
         _context?.Dispose();

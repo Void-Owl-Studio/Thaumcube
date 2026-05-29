@@ -24,15 +24,19 @@ public sealed class Hotbar
         return new Hotbar(Enumerable.Repeat(HotbarSlot.Empty, SlotCount).ToArray());
     }
 
-    public void UpdateSelection(InputManager input)
+    public bool UpdateSelection(InputManager input)
     {
+        var previousIndex = SelectedIndex;
+
         for (var i = 1; i <= SlotCount; i++)
         {
-            if (input.IsNumberPressed(i))
+            if (input.IsNumberPressedThisFrame(i))
             {
                 SelectedIndex = i - 1;
             }
         }
+
+        return SelectedIndex != previousIndex;
     }
 
     public bool TryAdd(BlockType block)

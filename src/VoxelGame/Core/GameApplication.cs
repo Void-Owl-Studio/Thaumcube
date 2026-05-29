@@ -98,7 +98,11 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
-        _hotbar.UpdateSelection(_input);
+        if (_hotbar.UpdateSelection(_input))
+        {
+            ResetBreaking();
+        }
+
         _player.Update(dt, _input);
         _world.LoadAround(_player.Position);
 
