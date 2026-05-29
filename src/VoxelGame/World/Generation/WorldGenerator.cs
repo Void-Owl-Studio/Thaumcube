@@ -6,9 +6,11 @@ namespace VoxelGame.World.Generation;
 public sealed class WorldGenerator
 {
     private readonly DeterministicNoise _noise;
+    public int Seed { get; }
 
     public WorldGenerator(int seed)
     {
+        Seed = seed;
         _noise = new DeterministicNoise(seed);
     }
 

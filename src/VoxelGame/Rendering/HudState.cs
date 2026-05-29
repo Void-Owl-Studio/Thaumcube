@@ -5,6 +5,8 @@ namespace VoxelGame.Rendering;
 
 public sealed class HudState
 {
+    public string MainMenuLoadWorldLabel { get; set; } = "LOAD WORLD";
+    public string MainMenuNewWorldLabel { get; set; } = "NEW WORLD";
     public int Fps { get; set; }
     public Vector3 PlayerPosition { get; set; }
     public int LoadedChunks { get; set; }

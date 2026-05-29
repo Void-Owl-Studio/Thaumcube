@@ -4,12 +4,12 @@ namespace VoxelGame.Rendering;
 
 public static class HudLayout
 {
-    public static MainMenuLayout BuildMainMenu(int width, int height, int renderDistance)
+    public static MainMenuLayout BuildMainMenu(int width, int height, string loadWorldLabel, string newWorldLabel, int renderDistance)
     {
         var menuScale = Math.Clamp(width / 430, 2, 4);
-        var y = height / 2 - 58;
-        var options = BuildMainMenuOptions(renderDistance);
-        var items = new MainMenuItemLayout[3];
+        var options = BuildMainMenuOptions(loadWorldLabel, newWorldLabel, renderDistance);
+        var y = height / 2 - 29 * options.Length;
+        var items = new MainMenuItemLayout[options.Length];
 
         for (var i = 0; i < items.Length; i++)
         {
@@ -33,9 +33,9 @@ public static class HudLayout
         return new HotbarLayout(slotSize, gap, startX, y);
     }
 
-    public static int? HitTestMainMenu(Vector2 mousePosition, int width, int height, int renderDistance)
+    public static int? HitTestMainMenu(Vector2 mousePosition, int width, int height, string loadWorldLabel, string newWorldLabel, int renderDistance)
     {
-        var layout = BuildMainMenu(width, height, renderDistance);
+        var layout = BuildMainMenu(width, height, loadWorldLabel, newWorldLabel, renderDistance);
         foreach (var item in layout.Items)
         {
             if (item.Bounds.Contains(mousePosition))
@@ -47,11 +47,12 @@ public static class HudLayout
         return null;
     }
 
-    public static string[] BuildMainMenuOptions(int renderDistance)
+    public static string[] BuildMainMenuOptions(string loadWorldLabel, string newWorldLabel, int renderDistance)
     {
         return
         [
-            "START",
+            loadWorldLabel,
+            newWorldLabel,
             $"RENDER DISTANCE {renderDistance}",
             "EXIT"
         ];

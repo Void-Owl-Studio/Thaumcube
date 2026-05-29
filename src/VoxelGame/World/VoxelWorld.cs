@@ -2,6 +2,7 @@ using System.Numerics;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 using VoxelGame.World.Generation;
+using VoxelGame.World.Storage;
 
 namespace VoxelGame.World;
 
@@ -9,16 +10,20 @@ public sealed class VoxelWorld
 {
     private readonly WorldGenerator _generator;
     private readonly ChunkManager _chunks;
+    private readonly WorldSaveStore? _saveStore;
 
     public BlockRegistry Blocks { get; } = new();
+    public int Seed => _generator.Seed;
+    public string? Name => _saveStore?.Name;
     public int RenderDistanceChunks => _chunks.RenderDistance;
     public int LoadedChunkCount => _chunks.LoadedChunkCount;
     public int VisibleMeshCount => _chunks.VisibleMeshCount;
 
-    public VoxelWorld(int seed, int renderDistance)
+    public VoxelWorld(int seed, int renderDistance, WorldSaveStore? saveStore = null)
     {
         _generator = new WorldGenerator(seed);
-        _chunks = new ChunkManager(_generator, renderDistance);
+        _saveStore = saveStore;
+        _chunks = new ChunkManager(_generator, renderDistance, saveStore);
     }
 
     public void LoadAround(Vector3 position) => _chunks.LoadAround(position);
@@ -55,4 +60,10 @@ public sealed class VoxelWorld
     public void RebuildDirtyMeshes() => _chunks.RebuildDirtyMeshes(this);
 
     public IEnumerable<ChunkRenderMesh> GetVisibleMeshes() => _chunks.VisibleMeshes;
+
+    public void SaveWorldState()
+    {
+        _saveStore?.Touch();
+        _chunks.SaveLoadedModifiedChunks();
+    }
 }

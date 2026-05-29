@@ -1,20 +1,24 @@
 using System.Numerics;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Generation;
+using VoxelGame.World.Storage;
 
 namespace VoxelGame.World.Chunks;
 
 public sealed class ChunkManager
 {
     private readonly Dictionary<ChunkCoord, Chunk> _chunks = new();
+    private readonly Dictionary<ChunkCoord, ChunkSnapshot> _savedChunks = new();
     private readonly WorldGenerator _generator;
+    private readonly WorldSaveStore? _saveStore;
     private readonly ChunkMeshBuilder _meshBuilder = new();
     private readonly int _renderDistance;
 
-    public ChunkManager(WorldGenerator generator, int renderDistance)
+    public ChunkManager(WorldGenerator generator, int renderDistance, WorldSaveStore? saveStore = null)
     {
         _generator = generator;
         _renderDistance = Math.Max(1, renderDistance);
+        _saveStore = saveStore;
     }
 
     public int RenderDistance => _renderDistance;
@@ -40,6 +44,7 @@ public sealed class ChunkManager
         {
             if (!needed.Contains(coord))
             {
+                SaveChunkState(_chunks[coord]);
                 _chunks.Remove(coord);
             }
         }
@@ -98,6 +103,14 @@ public sealed class ChunkManager
         }
     }
 
+    public void SaveLoadedModifiedChunks()
+    {
+        foreach (var chunk in _chunks.Values)
+        {
+            SaveChunkState(chunk);
+        }
+    }
+
     public static ChunkCoord ToChunkCoord(int worldX, int worldZ)
     {
         return new ChunkCoord(FloorDiv(worldX, Chunk.SizeX), FloorDiv(worldZ, Chunk.SizeZ));
@@ -116,9 +129,36 @@ public sealed class ChunkManager
         }
 
         var chunk = new Chunk(coord);
-        _generator.Generate(chunk);
+        if (_savedChunks.TryGetValue(coord, out var cachedSnapshot))
+        {
+            chunk.Aura = cachedSnapshot.Aura;
+            chunk.RestoreBlockSnapshot(cachedSnapshot.Blocks);
+        }
+        else if (_saveStore is not null && _saveStore.TryLoadChunk(coord, out var persistedSnapshot))
+        {
+            chunk.Aura = persistedSnapshot.Aura;
+            chunk.RestoreBlockSnapshot(persistedSnapshot.Blocks);
+            _savedChunks[coord] = new ChunkSnapshot(persistedSnapshot.Blocks, persistedSnapshot.Aura);
+        }
+        else
+        {
+            _generator.Generate(chunk);
+        }
+
         _chunks.Add(coord, chunk);
         return chunk;
+    }
+
+    private void SaveChunkState(Chunk chunk)
+    {
+        if (!chunk.HasModifications)
+        {
+            return;
+        }
+
+        var snapshot = new ChunkSnapshot(chunk.CreateBlockSnapshot(), chunk.Aura);
+        _savedChunks[chunk.Coord] = snapshot;
+        _saveStore?.SaveChunk(chunk.Coord, new ChunkSnapshotData(snapshot.Blocks, snapshot.Aura));
     }
 
     private void MarkDirty(ChunkCoord coord, int sectionIndex)
@@ -141,4 +181,6 @@ public sealed class ChunkManager
         var result = value % divisor;
         return result < 0 ? result + divisor : result;
     }
+
+    private sealed record ChunkSnapshot(ushort[] Blocks, ChunkAura Aura);
 }

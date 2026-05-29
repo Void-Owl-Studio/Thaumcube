@@ -62,8 +62,8 @@ internal unsafe sealed class VulkanImmediatePreview
         var title = "VOXELGAME";
         DrawText(commandBuffer, extent, title, (width - TextWidth(title, scale)) / 2, height / 5, scale, new Rgba(0.62f, 0.96f, 0.82f, 1f));
 
-        var options = HudLayout.BuildMainMenuOptions(scene.Hud.MainMenuRenderDistance);
-        var layout = HudLayout.BuildMainMenu(width, height, scene.Hud.MainMenuRenderDistance);
+        var options = HudLayout.BuildMainMenuOptions(scene.Hud.MainMenuLoadWorldLabel, scene.Hud.MainMenuNewWorldLabel, scene.Hud.MainMenuRenderDistance);
+        var layout = HudLayout.BuildMainMenu(width, height, scene.Hud.MainMenuLoadWorldLabel, scene.Hud.MainMenuNewWorldLabel, scene.Hud.MainMenuRenderDistance);
         var menuScale = layout.Scale;
 
         for (var i = 0; i < options.Length; i++)

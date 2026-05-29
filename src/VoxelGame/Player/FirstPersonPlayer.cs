@@ -3,6 +3,7 @@ using Silk.NET.Input;
 using VoxelGame.Input;
 using VoxelGame.Physics;
 using VoxelGame.World;
+using VoxelGame.World.Storage;
 
 namespace VoxelGame.Player;
 
@@ -36,6 +37,20 @@ public sealed class FirstPersonPlayer
     {
         Position = position;
         _velocity = Vector3.Zero;
+    }
+
+    public void SpawnAt(Vector3 position, float yawDegrees, float pitchDegrees)
+    {
+        Position = position;
+        YawDegrees = yawDegrees;
+        PitchDegrees = Math.Clamp(pitchDegrees, -89f, 89f);
+        _velocity = Vector3.Zero;
+        _grounded = false;
+    }
+
+    public PlayerSaveData CreateSaveData()
+    {
+        return PlayerSaveData.FromState(Position, YawDegrees, PitchDegrees);
     }
 
     public void Update(float dt, InputManager input)

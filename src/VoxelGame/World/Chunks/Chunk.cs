@@ -18,6 +18,7 @@ public sealed class Chunk
 
     public ChunkCoord Coord { get; }
     public bool IsDirty => _dirtySectionCount > 0;
+    public bool HasModifications { get; private set; }
     public ChunkAura Aura { get; set; }
 
     public Chunk(ChunkCoord coord)
@@ -54,6 +55,7 @@ public sealed class Chunk
         }
 
         _blocks[index] = (ushort)type;
+        HasModifications = true;
 
         var sectionIndex = GetSectionIndex(y);
         MarkDirty(sectionIndex);
@@ -75,6 +77,23 @@ public sealed class Chunk
     public void SetGeneratedBlock(int x, int y, int z, BlockType type)
     {
         _blocks[ToIndex(x, y, z)] = (ushort)type;
+    }
+
+    public ushort[] CreateBlockSnapshot()
+    {
+        return (ushort[])_blocks.Clone();
+    }
+
+    public void RestoreBlockSnapshot(ReadOnlySpan<ushort> blocks)
+    {
+        if (blocks.Length != BlockCount)
+        {
+            throw new ArgumentException($"Chunk snapshot size must be exactly {BlockCount} blocks.", nameof(blocks));
+        }
+
+        blocks.CopyTo(_blocks);
+        HasModifications = true;
+        MarkDirty();
     }
 
     public void SetSectionMesh(int sectionIndex, ChunkRenderMesh mesh)
