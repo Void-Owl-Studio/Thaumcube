@@ -16,20 +16,23 @@ internal sealed class BlockTextureAtlasBuilder
 
     public AtlasImage Build()
     {
-        var atlasRows = (BlockTextureAtlas.TextureCount + BlockTextureAtlas.TilesPerRow - 1) / BlockTextureAtlas.TilesPerRow;
-        var atlasWidth = BlockTextureAtlas.TilesPerRow * BlockTextureAtlas.TileSize;
-        var atlasHeight = atlasRows * BlockTextureAtlas.TileSize;
+        var atlasWidth = BlockTextureAtlas.GetAtlasWidth();
+        var atlasHeight = BlockTextureAtlas.GetAtlasHeight();
 
         using var atlas = new Image<Rgba32>(atlasWidth, atlasHeight);
 
         foreach (var entry in GetEntries())
         {
             using var source = Image.Load<Rgba32>(Path.Combine(_rootDirectory, entry.FileName));
-            source.Mutate(context => context.Resize(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize));
+            source.Mutate(context => context.Resize(new ResizeOptions
+            {
+                Size = new Size(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize),
+                Sampler = KnownResamplers.NearestNeighbor
+            }));
 
-            var tileX = (entry.Index % BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.TileSize;
-            var tileY = (entry.Index / BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.TileSize;
-            atlas.Mutate(context => context.DrawImage(source, new Point(tileX, tileY), 1f));
+            var tileX = (entry.Index % BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.PaddedTileSize;
+            var tileY = (entry.Index / BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.PaddedTileSize;
+            CopyTileWithPadding(atlas, source, tileX, tileY);
         }
 
         var pixels = new byte[atlasWidth * atlasHeight * 4];
@@ -58,6 +61,41 @@ internal sealed class BlockTextureAtlasBuilder
         }
 
         return entries;
+    }
+
+    private static void CopyTileWithPadding(Image<Rgba32> atlas, Image<Rgba32> source, int tileX, int tileY)
+    {
+        var padding = BlockTextureAtlas.TilePadding;
+        var tileSize = BlockTextureAtlas.TileSize;
+        var paddedTileSize = BlockTextureAtlas.PaddedTileSize;
+
+        for (var y = 0; y < tileSize; y++)
+        {
+            for (var x = 0; x < tileSize; x++)
+            {
+                atlas[tileX + padding + x, tileY + padding + y] = source[x, y];
+            }
+        }
+
+        for (var y = 0; y < tileSize; y++)
+        {
+            var leftPixel = source[0, y];
+            var rightPixel = source[tileSize - 1, y];
+            for (var pad = 0; pad < padding; pad++)
+            {
+                atlas[tileX + pad, tileY + padding + y] = leftPixel;
+                atlas[tileX + padding + tileSize + pad, tileY + padding + y] = rightPixel;
+            }
+        }
+
+        for (var pad = 0; pad < padding; pad++)
+        {
+            for (var x = 0; x < paddedTileSize; x++)
+            {
+                atlas[tileX + x, tileY + pad] = atlas[tileX + x, tileY + padding];
+                atlas[tileX + x, tileY + padding + tileSize + pad] = atlas[tileX + x, tileY + padding + tileSize - 1];
+            }
+        }
     }
 
     internal readonly record struct AtlasImage(int Width, int Height, byte[] Pixels);

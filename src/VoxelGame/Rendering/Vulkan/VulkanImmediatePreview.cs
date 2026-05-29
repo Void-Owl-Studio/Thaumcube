@@ -58,7 +58,7 @@ internal unsafe sealed class VulkanImmediatePreview
     {
         if (scene.Hud.ShowPauseOverlay)
         {
-            DrawPauseBackdrop(commandBuffer, extent, width, height);
+            DrawPauseBackdrop(commandBuffer, extent, scene, width, height);
         }
         else
         {
@@ -106,31 +106,60 @@ internal unsafe sealed class VulkanImmediatePreview
         }
     }
 
-    private void DrawPauseBackdrop(CommandBuffer commandBuffer, Extent2D extent, int width, int height)
+    private void DrawPauseBackdrop(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        const int tile = 10;
-        for (var y = 0; y < height; y += tile)
+        var faces = CollectProjectedFaces(scene, width, height, 2200);
+        var tileSize = Math.Clamp(Math.Min(width, height) / 26, 18, 34);
+        var tilesX = (width + tileSize - 1) / tileSize;
+        var tilesY = (height + tileSize - 1) / tileSize;
+        var samples = new BackdropSample[tilesX * tilesY];
+        var fallback = new Rgba(0.16f, 0.20f, 0.27f, 1f);
+
+        foreach (var face in faces)
         {
-            for (var x = 0; x < width; x += tile)
+            var centerX = face.X + face.Width / 2;
+            var centerY = face.Y + face.Height / 2;
+            if (centerX < 0 || centerX >= width || centerY < 0 || centerY >= height)
             {
-                var variant = ((x / tile) + (y / tile)) & 1;
-                var innerSize = variant == 0 ? 8 : 6;
-                var offset = variant == 0 ? 1 : 2;
-                DrawRect(commandBuffer, extent, x + offset, y + offset, innerSize, innerSize, new Rgba(0.060f, 0.050f, 0.075f, 1f));
+                continue;
+            }
+
+            var tileX = centerX / tileSize;
+            var tileY = centerY / tileSize;
+            var tileIndex = tileY * tilesX + tileX;
+            var weight = Math.Max(1f, (face.Width * face.Height) / Math.Max(18f, face.Depth * 6f));
+            samples[tileIndex].Accumulate(face.Color, weight);
+        }
+
+        for (var tileY = 0; tileY < tilesY; tileY++)
+        {
+            for (var tileX = 0; tileX < tilesX; tileX++)
+            {
+                var tileIndex = tileY * tilesX + tileX;
+                var color = samples[tileIndex].Weight > 0f
+                    ? Mix(samples[tileIndex].ToColor(), fallback, 0.58f)
+                    : fallback;
+
+                if (((tileX + tileY) & 1) == 0)
+                {
+                    color = Scale(color, 0.94f);
+                }
+
+                var x = tileX * tileSize;
+                var y = tileY * tileSize;
+                DrawRect(commandBuffer, extent, x, y, Math.Min(tileSize, width - x), Math.Min(tileSize, height - y), color);
             }
         }
 
-        for (var y = 0; y < height; y += 18)
-        {
-            DrawRect(commandBuffer, extent, 0, y, width, 4, new Rgba(0.040f, 0.034f, 0.052f, 1f));
-        }
+        DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.10f, 0.12f, 0.16f, 1f));
 
-        var panelWidth = Math.Clamp(width * 2 / 5, 280, 460);
-        var panelHeight = Math.Clamp(height / 3, 170, 250);
+        var panelWidth = Math.Clamp(width / 3, 340, 430);
+        var panelHeight = 146;
         var panelX = (width - panelWidth) / 2;
-        var panelY = height / 4;
-        DrawRect(commandBuffer, extent, panelX - 6, panelY - 6, panelWidth + 12, panelHeight + 12, new Rgba(0.18f, 0.15f, 0.22f, 1f));
-        DrawRect(commandBuffer, extent, panelX, panelY, panelWidth, panelHeight, new Rgba(0.030f, 0.025f, 0.038f, 1f));
+        var panelY = height / 2 - 40;
+        DrawRect(commandBuffer, extent, panelX - 10, panelY - 10, panelWidth + 20, panelHeight + 20, new Rgba(0.13f, 0.14f, 0.17f, 1f));
+        DrawRect(commandBuffer, extent, panelX - 2, panelY - 2, panelWidth + 4, panelHeight + 4, new Rgba(0.62f, 0.65f, 0.69f, 1f));
+        DrawRect(commandBuffer, extent, panelX, panelY, panelWidth, panelHeight, new Rgba(0.24f, 0.25f, 0.28f, 1f));
     }
 
     private void DrawRootMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -254,27 +283,31 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawProjectedVoxelMeshes(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        var forward = Vector3.Normalize(scene.Camera.Forward);
-        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, forward));
-        var up = Vector3.Normalize(Vector3.Cross(forward, right));
-        var focalLength = (height * 0.5f) / MathF.Tan(70f * MathF.PI / 360f);
-        var faces = new List<ProjectedFace>(2048);
-
-        foreach (var mesh in scene.ChunkMeshes)
-        {
-            ProjectMeshFaces(scene.Camera.Position, forward, right, up, focalLength, width, height, mesh, faces);
-        }
-
-        const int maxFaces = 3600;
-        var ordered = faces
+        var ordered = CollectProjectedFaces(scene, width, height, 3600)
             .OrderBy(face => face.Depth)
-            .Take(maxFaces)
+            .Take(3600)
             .OrderByDescending(face => face.Depth);
 
         foreach (var face in ordered)
         {
             DrawRect(commandBuffer, extent, face.X, face.Y, face.Width, face.Height, face.Color);
         }
+    }
+
+    private static List<ProjectedFace> CollectProjectedFaces(RenderScene scene, int width, int height, int capacity)
+    {
+        var forward = Vector3.Normalize(scene.Camera.Forward);
+        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, forward));
+        var up = Vector3.Normalize(Vector3.Cross(forward, right));
+        var focalLength = (height * 0.5f) / MathF.Tan(70f * MathF.PI / 360f);
+        var faces = new List<ProjectedFace>(capacity);
+
+        foreach (var mesh in scene.ChunkMeshes)
+        {
+            ProjectMeshFaces(scene.Camera.Position, forward, right, up, focalLength, width, height, mesh, faces);
+        }
+
+        return faces;
     }
 
     private static void ProjectMeshFaces(
@@ -624,6 +657,51 @@ internal unsafe sealed class VulkanImmediatePreview
             Math.Clamp(baseColor.G * shade, 0f, 1f),
             Math.Clamp(baseColor.B * shade, 0f, 1f),
             1f);
+    }
+
+    private static Rgba Mix(Rgba source, Rgba target, float targetWeight)
+    {
+        var sourceWeight = 1f - targetWeight;
+        return new Rgba(
+            source.R * sourceWeight + target.R * targetWeight,
+            source.G * sourceWeight + target.G * targetWeight,
+            source.B * sourceWeight + target.B * targetWeight,
+            1f);
+    }
+
+    private static Rgba Scale(Rgba color, float factor)
+    {
+        return new Rgba(
+            Math.Clamp(color.R * factor, 0f, 1f),
+            Math.Clamp(color.G * factor, 0f, 1f),
+            Math.Clamp(color.B * factor, 0f, 1f),
+            color.A);
+    }
+
+    private struct BackdropSample
+    {
+        public float R;
+        public float G;
+        public float B;
+        public float Weight;
+
+        public void Accumulate(Rgba color, float weight)
+        {
+            R += color.R * weight;
+            G += color.G * weight;
+            B += color.B * weight;
+            Weight += weight;
+        }
+
+        public Rgba ToColor()
+        {
+            if (Weight <= 0f)
+            {
+                return new Rgba(0f, 0f, 0f, 1f);
+            }
+
+            return new Rgba(R / Weight, G / Weight, B / Weight, 1f);
+        }
     }
 
     private readonly record struct Rgba(float R, float G, float B, float A);

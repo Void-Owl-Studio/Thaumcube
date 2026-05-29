@@ -1076,7 +1076,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
     {
         var camera = scene.Camera;
         var aspect = Math.Max(1f, _swapchainExtent.Width / (float)Math.Max(1u, _swapchainExtent.Height));
-        var view = Matrix4x4.CreateLookAt(camera.Position, camera.Position + camera.Forward, Vector3.UnitY);
+        var view = camera.ViewMatrix;
         var projection = Matrix4x4.CreatePerspectiveFieldOfView(
             MathF.PI / 180f * _settings.CameraFieldOfViewDegrees,
             aspect,

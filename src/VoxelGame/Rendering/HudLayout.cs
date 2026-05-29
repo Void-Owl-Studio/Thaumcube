@@ -11,7 +11,7 @@ public static class HudLayout
 
     public static MainMenuLayout BuildPauseMenu(int width, int height)
     {
-        return BuildCenteredButtons(width, height, ["SETTINGS", "EXIT TO MAIN MENU"], Math.Max(250, width / 3), 156);
+        return BuildCenteredButtons(width, height, ["SETTINGS", "EXIT TO MAIN MENU"], Math.Max(320, width / 3), 116);
     }
 
     public static SettingsLayout BuildSettingsMenu(int width, int height)

@@ -3,6 +3,7 @@ namespace VoxelGame.World.Blocks;
 public static class BlockTextureAtlas
 {
     public const int TileSize = 16;
+    public const int TilePadding = 1;
     public const int TilesPerRow = 4;
 
     public const int GrassTop = 0;
@@ -17,5 +18,13 @@ public static class BlockTextureAtlas
     public const int DestroyStageStart = 9;
     public const int TextureCount = 19;
 
+    public const int PaddedTileSize = TileSize + TilePadding * 2;
+
     public static int DestroyStage(int stage) => DestroyStageStart + Math.Clamp(stage, 0, 9);
+
+    public static int GetAtlasRows() => (TextureCount + TilesPerRow - 1) / TilesPerRow;
+
+    public static int GetAtlasWidth() => TilesPerRow * PaddedTileSize;
+
+    public static int GetAtlasHeight() => GetAtlasRows() * PaddedTileSize;
 }

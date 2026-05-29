@@ -1,6 +1,7 @@
 using System.Numerics;
 using VoxelGame.World;
 using VoxelGame.World.Blocks;
+using VoxelGame.World.Generation;
 
 namespace VoxelGame.World.Chunks;
 
@@ -67,28 +68,35 @@ public sealed class ChunkMeshBuilder
                 }
 
                 var textureIndex = world.Blocks.GetFaceTextureIndex(block, face.Normal);
-                var tint = ResolveTint(world, block, face.Normal, baseX + x, y, baseZ + z);
-                AddFace(vertices, indices, new Vector3(baseX + x, y, baseZ + z), face, textureIndex, block, tint);
+                var blockWorldX = baseX + x;
+                var blockWorldY = y;
+                var blockWorldZ = baseZ + z;
+                var tint = ResolveTint(world, block, face.Normal, blockWorldX, blockWorldY, blockWorldZ);
+                AddFace(world, vertices, indices, new Vector3(blockWorldX, blockWorldY, blockWorldZ), face, textureIndex, block, tint);
             }
         }
 
         return new ChunkRenderMesh(chunk.Coord, vertices, indices, $"chunk:{chunk.Coord.X},{chunk.Coord.Z}:section:{sectionIndex}");
     }
 
-    private static void AddFace(List<VoxelVertex> vertices, List<uint> indices, Vector3 origin, Face face, int textureIndex, BlockType block, Vector3 tint)
+    private static void AddFace(VoxelWorld world, List<VoxelVertex> vertices, List<uint> indices, Vector3 origin, Face face, int textureIndex, BlockType block, Vector3 tint)
     {
         var start = (uint)vertices.Count;
+        Span<float> aoValues = stackalloc float[4];
+
         for (var i = 0; i < 4; i++)
         {
-            vertices.Add(new VoxelVertex(origin + face.Corners[i], face.Normal, AtlasUv(face.Uvs[i], textureIndex), (uint)block, tint));
+            var ao = SampleAmbientOcclusion(world, origin, face.Normal, face.Corners[i]);
+            aoValues[i] = ao;
+            vertices.Add(new VoxelVertex(
+                origin + face.Corners[i],
+                face.Normal,
+                AtlasUv(face.Uvs[i], textureIndex),
+                (uint)block,
+                tint * ao));
         }
 
-        indices.Add(start);
-        indices.Add(start + 1);
-        indices.Add(start + 2);
-        indices.Add(start);
-        indices.Add(start + 2);
-        indices.Add(start + 3);
+        AddQuadIndices(indices, start, aoValues[0], aoValues[1], aoValues[2], aoValues[3]);
     }
 
     public static ChunkRenderMesh BuildDroppedBlockMesh(string key, Vector3 center, float size, float rotationRadians, BlockType block, BlockRegistry blocks)
@@ -153,25 +161,39 @@ public sealed class ChunkMeshBuilder
         indices.Add(start + 3);
     }
 
+    private static void AddQuadIndices(List<uint> indices, uint start, float ao0, float ao1, float ao2, float ao3)
+    {
+        if (ao0 + ao2 < ao1 + ao3)
+        {
+            indices.Add(start);
+            indices.Add(start + 1);
+            indices.Add(start + 3);
+            indices.Add(start + 1);
+            indices.Add(start + 2);
+            indices.Add(start + 3);
+            return;
+        }
+
+        AddQuadIndices(indices, start);
+    }
+
     private static Vector2 AtlasUv(Vector2 localUv, int textureIndex)
     {
         var tileX = textureIndex % BlockTextureAtlas.TilesPerRow;
         var tileY = textureIndex / BlockTextureAtlas.TilesPerRow;
-        var atlasRows = (BlockTextureAtlas.TextureCount + BlockTextureAtlas.TilesPerRow - 1) / BlockTextureAtlas.TilesPerRow;
-        var atlasWidth = BlockTextureAtlas.TilesPerRow * BlockTextureAtlas.TileSize;
-        var atlasHeight = atlasRows * BlockTextureAtlas.TileSize;
-        var insetX = 0.5f / atlasWidth;
-        var insetY = 0.5f / atlasHeight;
-        var tileWidth = 1f / BlockTextureAtlas.TilesPerRow;
-        var tileHeight = 1f / atlasRows;
+        var atlasWidth = (float)BlockTextureAtlas.GetAtlasWidth();
+        var atlasHeight = (float)BlockTextureAtlas.GetAtlasHeight();
+        var paddedTileSize = BlockTextureAtlas.PaddedTileSize;
+        var tilePixelX = tileX * paddedTileSize + BlockTextureAtlas.TilePadding;
+        var tilePixelY = tileY * paddedTileSize + BlockTextureAtlas.TilePadding;
         return new Vector2(
-            tileX * tileWidth + insetX + localUv.X * (tileWidth - insetX * 2f),
-            tileY * tileHeight + insetY + localUv.Y * (tileHeight - insetY * 2f));
+            (tilePixelX + localUv.X * BlockTextureAtlas.TileSize) / atlasWidth,
+            (tilePixelY + localUv.Y * BlockTextureAtlas.TileSize) / atlasHeight);
     }
 
     private static Vector3 ResolveTint(VoxelWorld world, BlockType block, Vector3 faceNormal, int worldX, int worldY, int worldZ)
     {
-        if (block != BlockType.Grass)
+        if (block != BlockType.Grass && block != BlockType.CorruptedGrass)
         {
             return Vector3.One;
         }
@@ -187,7 +209,7 @@ public sealed class ChunkMeshBuilder
 
     private static Vector3 ResolveItemTint(BlockType block, Vector3 faceNormal)
     {
-        if (block != BlockType.Grass)
+        if (block != BlockType.Grass && block != BlockType.CorruptedGrass)
         {
             return Vector3.One;
         }
@@ -197,8 +219,88 @@ public sealed class ChunkMeshBuilder
             return Vector3.One;
         }
 
-        var grassTint = new Vector3(0.48f, 0.76f, 0.30f);
+        var grassTint = block == BlockType.CorruptedGrass
+            ? GrassColorMap.Sample(0.5f, 0.5f, 1f)
+            : new Vector3(0.48f, 0.76f, 0.30f);
         return faceNormal.Y > 0.5f ? grassTint : Vector3.Lerp(Vector3.One, grassTint, 0.55f);
+    }
+
+    private static float SampleAmbientOcclusion(VoxelWorld world, Vector3 origin, Vector3 normal, Vector3 corner)
+    {
+        var blockX = (int)origin.X;
+        var blockY = (int)origin.Y;
+        var blockZ = (int)origin.Z;
+
+        GetFaceAxes(normal, out var axisA, out var axisB);
+        var signA = AxisCornerSign(corner, axisA);
+        var signB = AxisCornerSign(corner, axisB);
+
+        var offsetA = AxisVector(axisA) * signA;
+        var offsetB = AxisVector(axisB) * signB;
+
+        var side1Solid = IsOccluding(world, blockX, blockY, blockZ, normal + offsetA);
+        var side2Solid = IsOccluding(world, blockX, blockY, blockZ, normal + offsetB);
+        var cornerSolid = IsOccluding(world, blockX, blockY, blockZ, normal + offsetA + offsetB);
+
+        var occlusion = side1Solid && side2Solid
+            ? 3
+            : (side1Solid ? 1 : 0) + (side2Solid ? 1 : 0) + (cornerSolid ? 1 : 0);
+
+        return occlusion switch
+        {
+            0 => 1.00f,
+            1 => 0.76f,
+            2 => 0.56f,
+            _ => 0.42f
+        };
+    }
+
+    private static bool IsOccluding(VoxelWorld world, int blockX, int blockY, int blockZ, Vector3 offset)
+    {
+        var sampleX = blockX + (int)offset.X;
+        var sampleY = blockY + (int)offset.Y;
+        var sampleZ = blockZ + (int)offset.Z;
+        return !world.IsTransparent(sampleX, sampleY, sampleZ);
+    }
+
+    private static void GetFaceAxes(Vector3 normal, out int axisA, out int axisB)
+    {
+        if (MathF.Abs(normal.X) > 0.5f)
+        {
+            axisA = 1;
+            axisB = 2;
+            return;
+        }
+
+        if (MathF.Abs(normal.Y) > 0.5f)
+        {
+            axisA = 0;
+            axisB = 2;
+            return;
+        }
+
+        axisA = 0;
+        axisB = 1;
+    }
+
+    private static int AxisCornerSign(Vector3 corner, int axis)
+    {
+        return axis switch
+        {
+            0 => corner.X > 0.5f ? 1 : -1,
+            1 => corner.Y > 0.5f ? 1 : -1,
+            _ => corner.Z > 0.5f ? 1 : -1
+        };
+    }
+
+    private static Vector3 AxisVector(int axis)
+    {
+        return axis switch
+        {
+            0 => Vector3.UnitX,
+            1 => Vector3.UnitY,
+            _ => Vector3.UnitZ
+        };
     }
 
     private readonly record struct Face(Vector3 Normal, Vector3[] Corners, Vector2[] Uvs);
