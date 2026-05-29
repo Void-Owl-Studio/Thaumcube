@@ -59,27 +59,147 @@ internal unsafe sealed class VulkanImmediatePreview
         DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.025f, 0.018f, 0.035f, 0.92f));
 
         var scale = Math.Clamp(width / 320, 3, 5);
-        var title = "VOXELGAME";
+        var title = scene.Hud.MenuTitle;
         DrawText(commandBuffer, extent, title, (width - TextWidth(title, scale)) / 2, height / 5, scale, new Rgba(0.62f, 0.96f, 0.82f, 1f));
+        if (!string.IsNullOrWhiteSpace(scene.Hud.MenuSubtitle))
+        {
+            DrawText(commandBuffer, extent, scene.Hud.MenuSubtitle, (width - TextWidth(scene.Hud.MenuSubtitle, 2)) / 2, height / 5 + 38, 2, new Rgba(0.54f, 0.68f, 0.64f, 1f));
+        }
 
-        var options = HudLayout.BuildMainMenuOptions(scene.Hud.MainMenuLoadWorldLabel, scene.Hud.MainMenuNewWorldLabel, scene.Hud.MainMenuRenderDistance);
-        var layout = HudLayout.BuildMainMenu(width, height, scene.Hud.MainMenuLoadWorldLabel, scene.Hud.MainMenuNewWorldLabel, scene.Hud.MainMenuRenderDistance);
+        switch (scene.Hud.MenuScreen)
+        {
+            case MenuScreen.Main:
+                DrawRootMenu(commandBuffer, extent, scene, width, height);
+                break;
+            case MenuScreen.Singleplayer:
+                DrawWorldSelectionMenu(commandBuffer, extent, scene, width, height);
+                break;
+            case MenuScreen.Settings:
+                DrawSettingsMenu(commandBuffer, extent, scene, width, height);
+                break;
+            case MenuScreen.CreateWorld:
+                DrawCreateWorldMenu(commandBuffer, extent, scene, width, height);
+                break;
+        }
+
+        if (!string.IsNullOrWhiteSpace(scene.Hud.MenuStatusText))
+        {
+            var statusScale = 2;
+            DrawText(
+                commandBuffer,
+                extent,
+                scene.Hud.MenuStatusText,
+                (width - TextWidth(scene.Hud.MenuStatusText, statusScale)) / 2,
+                height - 64,
+                statusScale,
+                new Rgba(0.88f, 0.82f, 0.64f, 1f));
+        }
+    }
+
+    private void DrawRootMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var options = new[] { "SINGLEPLAYER", "SETTINGS", "EXIT" };
+        var layout = HudLayout.BuildMainMenu(width, height);
         var menuScale = layout.Scale;
 
         for (var i = 0; i < options.Length; i++)
         {
-            var selected = i == scene.Hud.MainMenuSelectedIndex;
-            var text = options[i];
-            var textWidth = TextWidth(text, menuScale);
             var bounds = layout.Items[i].Bounds;
-            var boxWidth = bounds.Width;
-            var boxX = bounds.X;
-            var boxY = bounds.Y;
-            var frame = selected ? new Rgba(0.56f, 0.95f, 0.78f, 1f) : new Rgba(0.16f, 0.13f, 0.18f, 1f);
-            DrawRect(commandBuffer, extent, boxX - 3, boxY - 3, boxWidth + 6, 38, frame);
-            DrawRect(commandBuffer, extent, boxX, boxY, boxWidth, 32, new Rgba(0.035f, 0.030f, 0.040f, 1f));
-            DrawText(commandBuffer, extent, text, (width - textWidth) / 2, boxY + 8, menuScale, selected ? new Rgba(0.90f, 1f, 0.86f, 1f) : new Rgba(0.66f, 0.66f, 0.70f, 1f));
+            DrawMenuButton(commandBuffer, extent, bounds, options[i], menuScale, i == scene.Hud.MainMenuSelectedIndex);
         }
+    }
+
+    private void DrawSettingsMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var layout = HudLayout.BuildSettingsMenu(width, height);
+        DrawRect(commandBuffer, extent, layout.RenderDistanceBounds.X - 3, layout.RenderDistanceBounds.Y - 3, layout.RenderDistanceBounds.Width + 6, layout.RenderDistanceBounds.Height + 6, new Rgba(0.16f, 0.13f, 0.18f, 1f));
+        DrawRect(commandBuffer, extent, layout.RenderDistanceBounds.X, layout.RenderDistanceBounds.Y, layout.RenderDistanceBounds.Width, layout.RenderDistanceBounds.Height, new Rgba(0.035f, 0.030f, 0.040f, 1f));
+        DrawText(commandBuffer, extent, "RENDER DISTANCE", layout.RenderDistanceBounds.X, layout.RenderDistanceBounds.Y - 26, 2, new Rgba(0.70f, 0.78f, 0.76f, 1f));
+        var valueText = $"{scene.Hud.MenuRenderDistance} CHUNKS";
+        DrawText(commandBuffer, extent, valueText, layout.RenderDistanceBounds.X + 12, layout.RenderDistanceBounds.Y + 10, layout.Scale, new Rgba(0.90f, 1f, 0.86f, 1f));
+        DrawSlider(commandBuffer, extent, layout.SliderBounds, scene.Hud.MenuRenderDistance, 1, 12);
+        DrawMenuButton(commandBuffer, extent, layout.BackButton.Bounds, "BACK", layout.Scale, scene.Hud.MenuSelectedActionIndex == 0);
+    }
+
+    private void DrawSlider(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, int value, int min, int max)
+    {
+        DrawRect(commandBuffer, extent, bounds.X, bounds.Y + bounds.Height / 2 - 2, bounds.Width, 4, new Rgba(0.14f, 0.12f, 0.17f, 1f));
+
+        var range = Math.Max(1, max - min);
+        var normalized = Math.Clamp((value - min) / (float)range, 0f, 1f);
+        var filledWidth = Math.Max(6, (int)MathF.Round(bounds.Width * normalized));
+        DrawRect(commandBuffer, extent, bounds.X, bounds.Y + bounds.Height / 2 - 2, filledWidth, 4, new Rgba(0.40f, 0.82f, 0.70f, 1f));
+
+        var knobX = bounds.X + (int)MathF.Round(normalized * bounds.Width);
+        DrawRect(commandBuffer, extent, knobX - 5, bounds.Y, 10, bounds.Height, new Rgba(0.90f, 1f, 0.86f, 1f));
+    }
+
+    private void DrawWorldSelectionMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var layout = HudLayout.BuildWorldSelectionMenu(width, height, scene.Hud.MenuWorldNames);
+        DrawRect(commandBuffer, extent, layout.ListBounds.X - 4, layout.ListBounds.Y - 4, layout.ListBounds.Width + 8, layout.ListBounds.Height + 8, new Rgba(0.16f, 0.13f, 0.18f, 1f));
+        DrawRect(commandBuffer, extent, layout.ListBounds.X, layout.ListBounds.Y, layout.ListBounds.Width, layout.ListBounds.Height, new Rgba(0.030f, 0.026f, 0.036f, 1f));
+
+        if (scene.Hud.MenuWorldNames.Count == 0)
+        {
+            DrawText(commandBuffer, extent, "NO SAVED WORLDS", (width - TextWidth("NO SAVED WORLDS", 2)) / 2, layout.ListBounds.Y + layout.ListBounds.Height / 2 - 7, 2, new Rgba(0.62f, 0.62f, 0.68f, 1f));
+        }
+        else
+        {
+            for (var i = 0; i < layout.WorldRows.Count; i++)
+            {
+                var row = layout.WorldRows[i];
+                var selected = i == scene.Hud.MenuSelectedWorldIndex;
+                var text = scene.Hud.MenuWorldNames[i];
+                var frame = selected ? new Rgba(0.56f, 0.95f, 0.78f, 1f) : new Rgba(0.12f, 0.10f, 0.14f, 1f);
+                DrawRect(commandBuffer, extent, row.Bounds.X - 2, row.Bounds.Y - 2, row.Bounds.Width + 4, row.Bounds.Height + 4, frame);
+                DrawRect(commandBuffer, extent, row.Bounds.X, row.Bounds.Y, row.Bounds.Width, row.Bounds.Height, new Rgba(0.045f, 0.040f, 0.052f, 1f));
+                var scale = layout.Scale;
+                var textWidth = TextWidth(text, scale);
+                var drawX = row.Bounds.X + 12;
+                if (textWidth > row.Bounds.Width - 24)
+                {
+                    scale = Math.Max(1, scale - 1);
+                }
+
+                DrawText(commandBuffer, extent, text, drawX, row.Bounds.Y + 8, scale, selected ? new Rgba(0.90f, 1f, 0.86f, 1f) : new Rgba(0.72f, 0.72f, 0.76f, 1f));
+            }
+        }
+
+        var actions = new[] { "CREATE", "LOAD", "DELETE", "BACK" };
+        for (var i = 0; i < layout.Buttons.Count; i++)
+        {
+            DrawMenuButton(commandBuffer, extent, layout.Buttons[i].Bounds, actions[i], layout.Scale, i == scene.Hud.MenuSelectedActionIndex);
+        }
+    }
+
+    private void DrawCreateWorldMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var layout = HudLayout.BuildCreateWorldMenu(width, height);
+        DrawRect(commandBuffer, extent, layout.NameFieldBounds.X - 3, layout.NameFieldBounds.Y - 3, layout.NameFieldBounds.Width + 6, layout.NameFieldBounds.Height + 6, new Rgba(0.16f, 0.13f, 0.18f, 1f));
+        DrawRect(commandBuffer, extent, layout.NameFieldBounds.X, layout.NameFieldBounds.Y, layout.NameFieldBounds.Width, layout.NameFieldBounds.Height, new Rgba(0.035f, 0.030f, 0.040f, 1f));
+        DrawText(commandBuffer, extent, "WORLD NAME", layout.NameFieldBounds.X, layout.NameFieldBounds.Y - 26, 2, new Rgba(0.70f, 0.78f, 0.76f, 1f));
+
+        var fieldText = string.IsNullOrWhiteSpace(scene.Hud.CreateWorldName) ? "TYPE NAME..." : scene.Hud.CreateWorldName;
+        var fieldColor = string.IsNullOrWhiteSpace(scene.Hud.CreateWorldName)
+            ? new Rgba(0.40f, 0.42f, 0.46f, 1f)
+            : new Rgba(0.90f, 1f, 0.86f, 1f);
+        DrawText(commandBuffer, extent, fieldText, layout.NameFieldBounds.X + 12, layout.NameFieldBounds.Y + 11, layout.Scale, fieldColor);
+
+        var actions = new[] { "CREATE", "BACK" };
+        for (var i = 0; i < layout.Buttons.Count; i++)
+        {
+            DrawMenuButton(commandBuffer, extent, layout.Buttons[i].Bounds, actions[i], layout.Scale, i == scene.Hud.MenuSelectedActionIndex);
+        }
+    }
+
+    private void DrawMenuButton(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, string text, int scale, bool selected)
+    {
+        var frame = selected ? new Rgba(0.56f, 0.95f, 0.78f, 1f) : new Rgba(0.16f, 0.13f, 0.18f, 1f);
+        DrawRect(commandBuffer, extent, bounds.X - 3, bounds.Y - 3, bounds.Width + 6, bounds.Height + 6, frame);
+        DrawRect(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, bounds.Height, new Rgba(0.035f, 0.030f, 0.040f, 1f));
+        var textX = bounds.X + (bounds.Width - TextWidth(text, scale)) / 2;
+        DrawText(commandBuffer, extent, text, textX, bounds.Y + 8, scale, selected ? new Rgba(0.90f, 1f, 0.86f, 1f) : new Rgba(0.66f, 0.66f, 0.70f, 1f));
     }
 
     private void DrawProjectedVoxelMeshes(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -386,6 +506,42 @@ internal unsafe sealed class VulkanImmediatePreview
             '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
             '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
             '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110],
+            '-' => [0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000],
+            '.' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
+            '_' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111],
+            'А' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+            'Б' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b11110],
+            'В' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+            'Г' => [0b11111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000],
+            'Д' => [0b00111, 0b01001, 0b01001, 0b01001, 0b11111, 0b10001, 0b10001],
+            'Е' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+            'Ё' => [0b01010, 0b00000, 0b11111, 0b10000, 0b11110, 0b10000, 0b11111],
+            'Ж' => [0b10101, 0b10101, 0b01110, 0b00100, 0b01110, 0b10101, 0b10101],
+            'З' => [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110],
+            'И' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+            'Й' => [0b01010, 0b00100, 0b10001, 0b11001, 0b10101, 0b10011, 0b10001],
+            'К' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+            'Л' => [0b00111, 0b01001, 0b01001, 0b01001, 0b01001, 0b01001, 0b10001],
+            'М' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+            'Н' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+            'О' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+            'П' => [0b11111, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001],
+            'Р' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+            'С' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+            'Т' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+            'У' => [0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b10001, 0b01110],
+            'Ф' => [0b00100, 0b01110, 0b10101, 0b10101, 0b10101, 0b01110, 0b00100],
+            'Х' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+            'Ц' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11111],
+            'Ч' => [0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b00001],
+            'Ш' => [0b10101, 0b10101, 0b10101, 0b10101, 0b10101, 0b10101, 0b11111],
+            'Щ' => [0b10101, 0b10101, 0b10101, 0b10101, 0b10101, 0b10101, 0b11111],
+            'Ъ' => [0b11000, 0b01000, 0b01000, 0b01110, 0b01001, 0b01001, 0b01110],
+            'Ы' => [0b10001, 0b10001, 0b10001, 0b11101, 0b10011, 0b10011, 0b11101],
+            'Ь' => [0b10000, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b11110],
+            'Э' => [0b01110, 0b10001, 0b00001, 0b00111, 0b00001, 0b10001, 0b01110],
+            'Ю' => [0b10010, 0b10101, 0b10101, 0b11101, 0b10101, 0b10101, 0b10010],
+            'Я' => [0b01111, 0b10001, 0b10001, 0b01111, 0b00101, 0b01001, 0b10001],
             _ => [0b11111, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100, 0b00100]
         };
     }

@@ -47,4 +47,22 @@ public static class WorldCatalog
     {
         return $"WORLD{DateTime.UtcNow:yyyyMMddHHmmss}";
     }
+
+    public static void DeleteWorld(string worldsRootPath, string worldName)
+    {
+        Directory.CreateDirectory(worldsRootPath);
+
+        var rootFullPath = Path.GetFullPath(worldsRootPath);
+        var worldFullPath = Path.GetFullPath(Path.Combine(worldsRootPath, worldName));
+        var relativePath = Path.GetRelativePath(rootFullPath, worldFullPath);
+        if (relativePath.StartsWith("..", StringComparison.OrdinalIgnoreCase) || Path.IsPathRooted(relativePath))
+        {
+            throw new InvalidOperationException($"Refusing to delete world path outside the worlds root: '{worldFullPath}'.");
+        }
+
+        if (Directory.Exists(worldFullPath))
+        {
+            Directory.Delete(worldFullPath, true);
+        }
+    }
 }

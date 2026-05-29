@@ -10,7 +10,7 @@ public sealed class GameSettings
     public int WorldSeed { get; init; } = 734_241;
     public int RenderDistanceChunks { get; init; } = 1;
     public int MinRenderDistanceChunks { get; init; } = 1;
-    public int MaxRenderDistanceChunks { get; init; } = 5;
+    public int MaxRenderDistanceChunks { get; init; } = 12;
     public string WorldsRootPath { get; init; } = Path.Combine(Directory.GetCurrentDirectory(), "worlds");
     public float MouseSensitivity { get; init; } = 0.12f;
     public float CloudHeightBlocks { get; init; } = 90f;

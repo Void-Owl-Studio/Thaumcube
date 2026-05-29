@@ -20,6 +20,7 @@ public sealed class InputManager : IDisposable
         Key.Left,
         Key.Right,
         Key.Enter,
+        Key.Backspace,
         Key.Number1,
         Key.Number2,
         Key.Number3,
@@ -34,6 +35,7 @@ public sealed class InputManager : IDisposable
     private IInputContext? _context;
     private IKeyboard? _keyboard;
     private IMouse? _mouse;
+    private readonly List<char> _typedCharacters = [];
     private bool _lastLeft;
     private bool _lastRight;
     private Vector2 _lastMousePosition;
@@ -48,6 +50,8 @@ public sealed class InputManager : IDisposable
     public bool LeftPressedThisFrame { get; private set; }
     public bool RightPressedThisFrame { get; private set; }
     public bool PlacePressedThisFrame { get; private set; }
+    public bool BackspacePressedThisFrame { get; private set; }
+    public string TypedText { get; private set; } = string.Empty;
     public Vector2 MousePosition { get; private set; }
     public Vector2 MouseDelta { get; private set; }
     public float ScrollDeltaY { get; private set; }
@@ -57,6 +61,11 @@ public sealed class InputManager : IDisposable
         _context = window.CreateInput();
         _keyboard = _context.Keyboards.FirstOrDefault();
         _mouse = _context.Mice.FirstOrDefault();
+
+        if (_keyboard is not null)
+        {
+            _keyboard.KeyChar += OnKeyChar;
+        }
 
         if (_mouse is not null)
         {
@@ -72,7 +81,9 @@ public sealed class InputManager : IDisposable
         BreakHeld = false;
         LeftPressedThisFrame = false;
         RightPressedThisFrame = false;
+        BackspacePressedThisFrame = false;
         MouseDelta = default;
+        TypedText = string.Empty;
         ScrollDeltaY = _scrollDeltaY;
         _scrollDeltaY = 0f;
 
@@ -91,6 +102,12 @@ public sealed class InputManager : IDisposable
         }
 
         ExitRequested = IsKeyPressedThisFrame(Key.Escape);
+        BackspacePressedThisFrame = IsKeyPressedThisFrame(Key.Backspace);
+        if (_typedCharacters.Count > 0)
+        {
+            TypedText = new string(_typedCharacters.ToArray());
+            _typedCharacters.Clear();
+        }
 
         if (_mouse is null)
         {
@@ -168,6 +185,11 @@ public sealed class InputManager : IDisposable
 
     public void Dispose()
     {
+        if (_keyboard is not null)
+        {
+            _keyboard.KeyChar -= OnKeyChar;
+        }
+
         if (_mouse is not null)
         {
             _mouse.Scroll -= OnMouseScroll;
@@ -179,5 +201,13 @@ public sealed class InputManager : IDisposable
     private void OnMouseScroll(IMouse mouse, ScrollWheel scrollWheel)
     {
         _scrollDeltaY += scrollWheel.Y;
+    }
+
+    private void OnKeyChar(IKeyboard keyboard, char character)
+    {
+        if (!char.IsControl(character))
+        {
+            _typedCharacters.Add(character);
+        }
     }
 }

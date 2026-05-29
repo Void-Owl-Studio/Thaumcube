@@ -34,6 +34,11 @@ public sealed class WorldSaveStore
         Directory.CreateDirectory(worldsRootPath);
 
         var worldPath = Path.Combine(worldsRootPath, worldName);
+        if (Directory.Exists(worldPath))
+        {
+            throw new InvalidOperationException($"World '{worldName}' already exists.");
+        }
+
         Directory.CreateDirectory(worldPath);
         Directory.CreateDirectory(Path.Combine(worldPath, "chunks"));
 

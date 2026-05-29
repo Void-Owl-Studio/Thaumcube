@@ -1,3 +1,4 @@
+using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using VoxelGame.Input;
@@ -9,7 +10,6 @@ using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 using VoxelGame.World.Items;
 using VoxelGame.World.Storage;
-using Silk.NET.Input;
 
 namespace VoxelGame.Core;
 
@@ -23,24 +23,39 @@ public sealed class GameApplication : IDisposable
     private readonly FrameTimer _timer = new();
     private readonly HudState _hud = new();
     private readonly double? _autoCloseAfterSeconds;
+    private readonly char[] _invalidWorldNameChars = Path.GetInvalidFileNameChars();
+    private readonly List<WorldMetadata> _availableWorlds = [];
     private WorldSaveStore? _activeWorldStore;
     private VoxelWorld? _world;
     private FirstPersonPlayer? _player;
     private DroppedBlockManager? _drops;
     private GameMode _mode = GameMode.MainMenu;
-    private int _menuSelectedIndex;
+    private MenuScreen _menuScreen = MenuScreen.Main;
+    private int _mainMenuSelectedIndex;
     private int _selectedRenderDistance;
-    private string? _loadableWorldName;
+    private int _selectedWorldIndex = -1;
+    private int _worldListScrollOffset;
+    private int _singleplayerActionIndex;
+    private int _settingsActionIndex;
+    private int _createWorldActionIndex;
     private string _newWorldName = string.Empty;
+    private string _menuStatusText = string.Empty;
     private VoxelRaycastHit? _currentBreakTarget;
     private float _breakProgressSeconds;
     private double _runningSeconds;
     private bool _disposedRuntime;
     private const float BlockBreakSeconds = 0.65f;
-    private const int LoadWorldMenuIndex = 0;
-    private const int NewWorldMenuIndex = 1;
-    private const int RenderDistanceMenuIndex = 2;
-    private const int ExitMenuIndex = 3;
+    private const int MainMenuSingleplayerIndex = 0;
+    private const int MainMenuSettingsIndex = 1;
+    private const int MainMenuExitIndex = 2;
+    private const int SingleplayerCreateIndex = 0;
+    private const int SingleplayerLoadIndex = 1;
+    private const int SingleplayerDeleteIndex = 2;
+    private const int SingleplayerBackIndex = 3;
+    private const int SettingsBackIndex = 0;
+    private const int CreateWorldConfirmIndex = 0;
+    private const int CreateWorldBackIndex = 1;
+    private const int MaxWorldNameLength = 32;
 
     public GameApplication(double? autoCloseAfterSeconds = null)
     {
@@ -54,7 +69,7 @@ public sealed class GameApplication : IDisposable
         _selectedRenderDistance = _settings.RenderDistanceChunks;
         _hotbar = Hotbar.CreateEmpty();
         _renderer = new VulkanRenderer(_settings);
-        RefreshWorldMenuState();
+        RefreshWorldCatalog();
 
         _window.Load += OnLoad;
         _window.Update += OnUpdate;
@@ -88,7 +103,7 @@ public sealed class GameApplication : IDisposable
 
         if (_mode == GameMode.MainMenu)
         {
-            UpdateMainMenu();
+            UpdateMenu();
             UpdateHud();
             return;
         }
@@ -126,68 +141,278 @@ public sealed class GameApplication : IDisposable
         UpdateHud();
     }
 
+    private void UpdateMenu()
+    {
+        switch (_menuScreen)
+        {
+            case MenuScreen.Main:
+                UpdateMainMenu();
+                break;
+            case MenuScreen.Singleplayer:
+                UpdateSingleplayerMenu();
+                break;
+            case MenuScreen.Settings:
+                UpdateSettingsMenu();
+                break;
+            case MenuScreen.CreateWorld:
+                UpdateCreateWorldMenu();
+                break;
+        }
+    }
+
     private void UpdateMainMenu()
     {
-        var hoveredMenuItem = HudLayout.HitTestMainMenu(
-            _input.MousePosition,
-            _window.Size.X,
-            _window.Size.Y,
-            _hud.MainMenuLoadWorldLabel,
-            _hud.MainMenuNewWorldLabel,
-            _selectedRenderDistance);
+        var hoveredMenuItem = HudLayout.HitTestMainMenu(_input.MousePosition, _window.Size.X, _window.Size.Y);
         if (hoveredMenuItem.HasValue)
         {
-            _menuSelectedIndex = hoveredMenuItem.Value;
+            _mainMenuSelectedIndex = hoveredMenuItem.Value;
         }
 
         if (_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
         {
-            _menuSelectedIndex = (_menuSelectedIndex + 3) % 4;
+            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + 2) % 3;
         }
 
         if (_input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S))
         {
-            _menuSelectedIndex = (_menuSelectedIndex + 1) % 4;
-        }
-
-        if (_menuSelectedIndex == RenderDistanceMenuIndex)
-        {
-            if (_input.IsKeyPressedThisFrame(Key.Left) || _input.IsKeyPressedThisFrame(Key.A))
-            {
-                _selectedRenderDistance = Math.Max(_settings.MinRenderDistanceChunks, _selectedRenderDistance - 1);
-            }
-
-            if (_input.IsKeyPressedThisFrame(Key.Right) || _input.IsKeyPressedThisFrame(Key.D))
-            {
-                _selectedRenderDistance = Math.Min(_settings.MaxRenderDistanceChunks, _selectedRenderDistance + 1);
-            }
+            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + 1) % 3;
         }
 
         if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
         {
-            if (_menuSelectedIndex == LoadWorldMenuIndex)
-            {
-                LoadLatestWorldOrCreate();
-            }
-            else if (_menuSelectedIndex == NewWorldMenuIndex)
-            {
-                StartNewWorld();
-            }
-            else if (_menuSelectedIndex == ExitMenuIndex)
-            {
-                _window.Close();
-            }
+            ActivateMainMenu(_mainMenuSelectedIndex);
         }
 
         if (_input.LeftPressedThisFrame && hoveredMenuItem.HasValue)
         {
-            HandleMainMenuClick(hoveredMenuItem.Value, _input.MousePosition.X);
+            ActivateMainMenu(hoveredMenuItem.Value);
         }
 
         if (_input.ExitRequested)
         {
             _window.Close();
         }
+    }
+
+    private void UpdateSingleplayerMenu()
+    {
+        var hoveredWorldIndex = HudLayout.HitTestWorldSelectionWorld(_input.MousePosition, _window.Size.X, _window.Size.Y, GetVisibleWorldNames());
+        if (hoveredWorldIndex.HasValue)
+        {
+            _selectedWorldIndex = _worldListScrollOffset + hoveredWorldIndex.Value;
+            EnsureWorldSelectionVisible();
+            ClearMenuStatus();
+        }
+
+        var hoveredAction = HudLayout.HitTestWorldSelectionAction(_input.MousePosition, _window.Size.X, _window.Size.Y, GetVisibleWorldNames());
+        if (hoveredAction.HasValue)
+        {
+            _singleplayerActionIndex = hoveredAction.Value;
+        }
+
+        if (_input.ScrollDeltaY != 0f && _availableWorlds.Count > 0)
+        {
+            var direction = _input.ScrollDeltaY > 0f ? -1 : 1;
+            _selectedWorldIndex = Math.Clamp(_selectedWorldIndex + direction, 0, _availableWorlds.Count - 1);
+            EnsureWorldSelectionVisible();
+        }
+
+        if ((_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W)) && _availableWorlds.Count > 0)
+        {
+            _selectedWorldIndex = Math.Clamp(_selectedWorldIndex - 1, 0, _availableWorlds.Count - 1);
+            EnsureWorldSelectionVisible();
+            ClearMenuStatus();
+        }
+
+        if ((_input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S)) && _availableWorlds.Count > 0)
+        {
+            _selectedWorldIndex = Math.Clamp(_selectedWorldIndex + 1, 0, _availableWorlds.Count - 1);
+            EnsureWorldSelectionVisible();
+            ClearMenuStatus();
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Left) || _input.IsKeyPressedThisFrame(Key.A))
+        {
+            _singleplayerActionIndex = (_singleplayerActionIndex + 3) % 4;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Right) || _input.IsKeyPressedThisFrame(Key.D))
+        {
+            _singleplayerActionIndex = (_singleplayerActionIndex + 1) % 4;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
+        {
+            ActivateSingleplayerAction(_singleplayerActionIndex);
+        }
+
+        if (_input.LeftPressedThisFrame && hoveredAction.HasValue)
+        {
+            ActivateSingleplayerAction(hoveredAction.Value);
+        }
+
+        if (_input.ExitRequested)
+        {
+            OpenMainMenu();
+        }
+    }
+
+    private void UpdateSettingsMenu()
+    {
+        var hoveredSlider = HudLayout.HitTestSettingsSlider(_input.MousePosition, _window.Size.X, _window.Size.Y);
+        var hoveredAction = HudLayout.HitTestSettingsAction(_input.MousePosition, _window.Size.X, _window.Size.Y);
+        if (hoveredAction.HasValue)
+        {
+            _settingsActionIndex = hoveredAction.Value;
+        }
+
+        if (_input.LeftPressedThisFrame && hoveredSlider)
+        {
+            var layout = HudLayout.BuildSettingsMenu(_window.Size.X, _window.Size.Y);
+            _selectedRenderDistance = SliderPositionToRenderDistance(layout.SliderBounds, _input.MousePosition.X);
+            ClearMenuStatus();
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Left) || _input.IsKeyPressedThisFrame(Key.A))
+        {
+            _selectedRenderDistance = Math.Max(_settings.MinRenderDistanceChunks, _selectedRenderDistance - 1);
+            ClearMenuStatus();
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Right) || _input.IsKeyPressedThisFrame(Key.D))
+        {
+            _selectedRenderDistance = Math.Min(_settings.MaxRenderDistanceChunks, _selectedRenderDistance + 1);
+            ClearMenuStatus();
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
+        {
+            OpenMainMenu();
+        }
+
+        if (_input.LeftPressedThisFrame && hoveredAction.HasValue)
+        {
+            OpenMainMenu();
+        }
+
+        if (_input.ExitRequested)
+        {
+            OpenMainMenu();
+        }
+    }
+
+    private int SliderPositionToRenderDistance(UiRect sliderBounds, float mouseX)
+    {
+        var clampedX = Math.Clamp(mouseX, sliderBounds.X, sliderBounds.Right);
+        var range = Math.Max(1, _settings.MaxRenderDistanceChunks - _settings.MinRenderDistanceChunks);
+        var normalized = (clampedX - sliderBounds.X) / Math.Max(1, sliderBounds.Width);
+        var value = _settings.MinRenderDistanceChunks + (int)MathF.Round(normalized * range);
+        return Math.Clamp(value, _settings.MinRenderDistanceChunks, _settings.MaxRenderDistanceChunks);
+    }
+
+    private void UpdateCreateWorldMenu()
+    {
+        foreach (var character in _input.TypedText)
+        {
+            if (_newWorldName.Length >= MaxWorldNameLength)
+            {
+                break;
+            }
+
+            if (!char.IsControl(character) && Array.IndexOf(_invalidWorldNameChars, character) < 0)
+            {
+                _newWorldName += character;
+                ClearMenuStatus();
+            }
+        }
+
+        if (_input.BackspacePressedThisFrame && _newWorldName.Length > 0)
+        {
+            _newWorldName = _newWorldName[..^1];
+            ClearMenuStatus();
+        }
+
+        var hoveredAction = HudLayout.HitTestCreateWorldAction(_input.MousePosition, _window.Size.X, _window.Size.Y);
+        if (hoveredAction.HasValue)
+        {
+            _createWorldActionIndex = hoveredAction.Value;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Left) || _input.IsKeyPressedThisFrame(Key.A) || _input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
+        {
+            _createWorldActionIndex = (_createWorldActionIndex + 1) % 2;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Right) || _input.IsKeyPressedThisFrame(Key.D) || _input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S))
+        {
+            _createWorldActionIndex = (_createWorldActionIndex + 1) % 2;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
+        {
+            ActivateCreateWorldAction(_createWorldActionIndex);
+        }
+
+        if (_input.LeftPressedThisFrame && hoveredAction.HasValue)
+        {
+            ActivateCreateWorldAction(hoveredAction.Value);
+        }
+
+        if (_input.ExitRequested)
+        {
+            OpenSingleplayerMenu();
+        }
+    }
+
+    private void ActivateMainMenu(int menuIndex)
+    {
+        _mainMenuSelectedIndex = menuIndex;
+        if (menuIndex == MainMenuSingleplayerIndex)
+        {
+            OpenSingleplayerMenu();
+            return;
+        }
+
+        if (menuIndex == MainMenuSettingsIndex)
+        {
+            OpenSettingsMenu();
+            return;
+        }
+
+        _window.Close();
+    }
+
+    private void ActivateSingleplayerAction(int actionIndex)
+    {
+        _singleplayerActionIndex = actionIndex;
+
+        switch (actionIndex)
+        {
+            case SingleplayerCreateIndex:
+                OpenCreateWorldMenu();
+                return;
+            case SingleplayerLoadIndex:
+                LoadSelectedWorld();
+                return;
+            case SingleplayerDeleteIndex:
+                DeleteSelectedWorld();
+                return;
+            case SingleplayerBackIndex:
+                OpenMainMenu();
+                return;
+        }
+    }
+
+    private void ActivateCreateWorldAction(int actionIndex)
+    {
+        _createWorldActionIndex = actionIndex;
+        if (actionIndex == CreateWorldConfirmIndex)
+        {
+            CreateWorldFromMenu();
+            return;
+        }
+
+        OpenSingleplayerMenu();
     }
 
     private void StartGame(WorldSaveStore worldStore)
@@ -215,50 +440,6 @@ public sealed class GameApplication : IDisposable
         _mode = GameMode.Playing;
         _input.SetCursorCaptured(true);
         ResetBreaking();
-    }
-
-    private void HandleMainMenuClick(int menuIndex, float mouseX)
-    {
-        _menuSelectedIndex = menuIndex;
-
-        if (menuIndex == LoadWorldMenuIndex)
-        {
-            LoadLatestWorldOrCreate();
-            return;
-        }
-
-        if (menuIndex == NewWorldMenuIndex)
-        {
-            StartNewWorld();
-            return;
-        }
-
-        if (menuIndex == RenderDistanceMenuIndex)
-        {
-            var layout = HudLayout.BuildMainMenu(
-                _window.Size.X,
-                _window.Size.Y,
-                _hud.MainMenuLoadWorldLabel,
-                _hud.MainMenuNewWorldLabel,
-                _selectedRenderDistance);
-            var bounds = layout.Items[menuIndex].Bounds;
-            var midX = bounds.X + bounds.Width / 2f;
-            if (mouseX < midX)
-            {
-                _selectedRenderDistance = Math.Max(_settings.MinRenderDistanceChunks, _selectedRenderDistance - 1);
-            }
-            else
-            {
-                _selectedRenderDistance = Math.Min(_settings.MaxRenderDistanceChunks, _selectedRenderDistance + 1);
-            }
-
-            return;
-        }
-
-        if (menuIndex == ExitMenuIndex)
-        {
-            _window.Close();
-        }
     }
 
     private void HandleBlockInteraction(float dt)
@@ -363,8 +544,37 @@ public sealed class GameApplication : IDisposable
         _hud.LoadedChunks = _world?.LoadedChunkCount ?? 0;
         _hud.VisibleChunkMeshes = _world?.VisibleMeshCount ?? 0;
         _hud.ShowMainMenu = _mode == GameMode.MainMenu;
-        _hud.MainMenuSelectedIndex = _menuSelectedIndex;
-        _hud.MainMenuRenderDistance = _selectedRenderDistance;
+        _hud.MenuScreen = _menuScreen;
+        _hud.MainMenuSelectedIndex = _mainMenuSelectedIndex;
+        _hud.MenuSelectedActionIndex = _menuScreen switch
+        {
+            MenuScreen.CreateWorld => _createWorldActionIndex,
+            MenuScreen.Settings => _settingsActionIndex,
+            _ => _singleplayerActionIndex
+        };
+        _hud.MenuTitle = _menuScreen switch
+        {
+            MenuScreen.Main => "VOXELGAME",
+            MenuScreen.Singleplayer => "SINGLEPLAYER",
+            MenuScreen.Settings => "SETTINGS",
+            MenuScreen.CreateWorld => "CREATE WORLD",
+            _ => "VOXELGAME"
+        };
+        _hud.MenuSubtitle = _menuScreen switch
+        {
+            MenuScreen.Main => "ANCIENT ARCANE SANDBOX",
+            MenuScreen.Singleplayer => _availableWorlds.Count == 0 ? "NO WORLDS FOUND" : "SELECT A WORLD",
+            MenuScreen.Settings => "TUNE WORLD VIEW",
+            MenuScreen.CreateWorld => "ENTER WORLD NAME",
+            _ => string.Empty
+        };
+        _hud.MenuStatusText = _menuStatusText;
+        _hud.CreateWorldName = _newWorldName;
+        _hud.MenuWorldNames = GetVisibleWorldNames();
+        _hud.MenuRenderDistance = _selectedRenderDistance;
+        _hud.MenuSelectedWorldIndex = _selectedWorldIndex < _worldListScrollOffset
+            ? -1
+            : _selectedWorldIndex - _worldListScrollOffset;
     }
 
     private void ResetBreaking()
@@ -398,21 +608,113 @@ public sealed class GameApplication : IDisposable
         _disposedRuntime = true;
     }
 
-    private void LoadLatestWorldOrCreate()
+    private void OpenMainMenu()
     {
-        if (string.IsNullOrWhiteSpace(_loadableWorldName))
+        _menuScreen = MenuScreen.Main;
+        _mainMenuSelectedIndex = Math.Clamp(_mainMenuSelectedIndex, MainMenuSingleplayerIndex, MainMenuExitIndex);
+        ClearMenuStatus();
+    }
+
+    private void OpenSingleplayerMenu()
+    {
+        RefreshWorldCatalog();
+        _menuScreen = MenuScreen.Singleplayer;
+        _singleplayerActionIndex = SingleplayerCreateIndex;
+        ClearMenuStatus();
+    }
+
+    private void OpenSettingsMenu()
+    {
+        _menuScreen = MenuScreen.Settings;
+        _settingsActionIndex = SettingsBackIndex;
+        ClearMenuStatus();
+    }
+
+    private void OpenCreateWorldMenu()
+    {
+        _menuScreen = MenuScreen.CreateWorld;
+        _newWorldName = string.Empty;
+        _createWorldActionIndex = CreateWorldConfirmIndex;
+        ClearMenuStatus();
+    }
+
+    private void LoadSelectedWorld()
+    {
+        var world = GetSelectedWorld();
+        if (world is null)
         {
-            StartNewWorld();
+            _menuStatusText = "SELECT A WORLD TO LOAD";
             return;
         }
 
-        StartGame(WorldSaveStore.Open(_settings.WorldsRootPath, _loadableWorldName));
+        try
+        {
+            StartGame(WorldSaveStore.Open(_settings.WorldsRootPath, world.Name));
+        }
+        catch (Exception)
+        {
+            _menuStatusText = "FAILED TO LOAD WORLD";
+            RefreshWorldCatalog();
+        }
     }
 
-    private void StartNewWorld()
+    private void DeleteSelectedWorld()
     {
-        var worldName = EnsureUniqueWorldName();
-        StartGame(WorldSaveStore.CreateNew(_settings.WorldsRootPath, worldName, _settings.WorldSeed));
+        var world = GetSelectedWorld();
+        if (world is null)
+        {
+            _menuStatusText = "SELECT A WORLD TO DELETE";
+            return;
+        }
+
+        try
+        {
+            WorldCatalog.DeleteWorld(_settings.WorldsRootPath, world.Name);
+            RefreshWorldCatalog();
+            _menuStatusText = $"DELETED {world.Name.ToUpperInvariant()}";
+        }
+        catch (Exception)
+        {
+            _menuStatusText = "FAILED TO DELETE WORLD";
+        }
+    }
+
+    private void CreateWorldFromMenu()
+    {
+        var worldName = _newWorldName.Trim();
+        if (string.IsNullOrWhiteSpace(worldName))
+        {
+            _menuStatusText = "ENTER A WORLD NAME";
+            return;
+        }
+
+        if (worldName.EndsWith(' ') || worldName.EndsWith('.'))
+        {
+            _menuStatusText = "NAME CANNOT END WITH SPACE OR DOT";
+            return;
+        }
+
+        if (worldName.IndexOfAny(_invalidWorldNameChars) >= 0)
+        {
+            _menuStatusText = "NAME CONTAINS INVALID CHARACTERS";
+            return;
+        }
+
+        if (_availableWorlds.Any(world => string.Equals(world.Name, worldName, StringComparison.OrdinalIgnoreCase)))
+        {
+            _menuStatusText = "WORLD NAME ALREADY EXISTS";
+            return;
+        }
+
+        try
+        {
+            StartGame(WorldSaveStore.CreateNew(_settings.WorldsRootPath, worldName, _settings.WorldSeed));
+        }
+        catch (Exception)
+        {
+            _menuStatusText = "FAILED TO CREATE WORLD";
+            RefreshWorldCatalog();
+        }
     }
 
     private void ReturnToMainMenu()
@@ -426,7 +728,8 @@ public sealed class GameApplication : IDisposable
         _mode = GameMode.MainMenu;
         _input.SetCursorCaptured(false);
         ResetBreaking();
-        RefreshWorldMenuState();
+        OpenMainMenu();
+        RefreshWorldCatalog();
     }
 
     private void SaveActiveWorld()
@@ -443,38 +746,83 @@ public sealed class GameApplication : IDisposable
         }
     }
 
-    private void RefreshWorldMenuState()
+    private void RefreshWorldCatalog()
     {
-        var worlds = WorldCatalog.ListWorlds(_settings.WorldsRootPath);
-        _loadableWorldName = worlds.FirstOrDefault()?.Name;
-        _newWorldName = EnsureUniqueWorldName(worlds.Select(world => world.Name));
-        _menuSelectedIndex = Math.Clamp(_menuSelectedIndex, 0, ExitMenuIndex);
+        _availableWorlds.Clear();
+        _availableWorlds.AddRange(WorldCatalog.ListWorlds(_settings.WorldsRootPath));
 
-        _hud.MainMenuLoadWorldLabel = _loadableWorldName is null
-            ? "LOAD WORLD NONE"
-            : $"LOAD WORLD {_loadableWorldName.ToUpperInvariant()}";
-        _hud.MainMenuNewWorldLabel = $"NEW WORLD {_newWorldName.ToUpperInvariant()}";
-    }
-
-    private string EnsureUniqueWorldName()
-    {
-        return EnsureUniqueWorldName(WorldCatalog.ListWorlds(_settings.WorldsRootPath).Select(world => world.Name));
-    }
-
-    private static string EnsureUniqueWorldName(IEnumerable<string> existingWorldNames)
-    {
-        var existing = new HashSet<string>(existingWorldNames, StringComparer.OrdinalIgnoreCase);
-        var baseName = WorldCatalog.CreateNewWorldName();
-        var candidate = baseName;
-        var suffix = 1;
-
-        while (existing.Contains(candidate))
+        if (_availableWorlds.Count == 0)
         {
-            candidate = $"{baseName}{suffix}";
-            suffix++;
+            _selectedWorldIndex = -1;
+            _worldListScrollOffset = 0;
+        }
+        else
+        {
+            _selectedWorldIndex = Math.Clamp(_selectedWorldIndex, 0, _availableWorlds.Count - 1);
+            if (_selectedWorldIndex < 0)
+            {
+                _selectedWorldIndex = 0;
+            }
+
+            EnsureWorldSelectionVisible();
+        }
+    }
+
+    private WorldMetadata? GetSelectedWorld()
+    {
+        if (_selectedWorldIndex < 0 || _selectedWorldIndex >= _availableWorlds.Count)
+        {
+            return null;
         }
 
-        return candidate;
+        return _availableWorlds[_selectedWorldIndex];
+    }
+
+    private IReadOnlyList<string> GetVisibleWorldNames()
+    {
+        var maxVisible = GetVisibleWorldRowCapacity();
+        if (_availableWorlds.Count == 0 || maxVisible <= 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var visibleCount = Math.Min(maxVisible, _availableWorlds.Count - _worldListScrollOffset);
+        var worlds = new string[visibleCount];
+        for (var i = 0; i < visibleCount; i++)
+        {
+            worlds[i] = _availableWorlds[_worldListScrollOffset + i].Name;
+        }
+
+        return worlds;
+    }
+
+    private int GetVisibleWorldRowCapacity()
+    {
+        return Math.Max(4, Math.Min(8, _window.Size.Y / 76));
+    }
+
+    private void EnsureWorldSelectionVisible()
+    {
+        if (_selectedWorldIndex < 0)
+        {
+            _worldListScrollOffset = 0;
+            return;
+        }
+
+        var visibleCount = GetVisibleWorldRowCapacity();
+        if (_selectedWorldIndex < _worldListScrollOffset)
+        {
+            _worldListScrollOffset = _selectedWorldIndex;
+        }
+        else if (_selectedWorldIndex >= _worldListScrollOffset + visibleCount)
+        {
+            _worldListScrollOffset = _selectedWorldIndex - visibleCount + 1;
+        }
+    }
+
+    private void ClearMenuStatus()
+    {
+        _menuStatusText = string.Empty;
     }
 
     private enum GameMode
