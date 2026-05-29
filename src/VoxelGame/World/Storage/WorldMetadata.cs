@@ -2,6 +2,7 @@ namespace VoxelGame.World.Storage;
 
 public sealed record WorldMetadata
 {
+    public int FormatVersion { get; init; }
     public string Name { get; init; } = string.Empty;
     public int Seed { get; init; }
     public DateTime CreatedUtc { get; init; }

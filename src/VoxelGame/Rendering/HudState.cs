@@ -9,6 +9,7 @@ public sealed class HudState
     public Vector3 PlayerPosition { get; set; }
     public int LoadedChunks { get; set; }
     public int VisibleChunkMeshes { get; set; }
+    public string CurrentBiome { get; set; } = string.Empty;
     public int SelectedSlot { get; set; }
     public BlockType SelectedBlock { get; set; }
     public BlockType TargetedBlock { get; set; }

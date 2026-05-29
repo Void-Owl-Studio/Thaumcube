@@ -5,6 +5,8 @@ namespace VoxelGame.World.Storage;
 
 public sealed class WorldSaveStore
 {
+    public const int CurrentFormatVersion = 2;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -45,6 +47,7 @@ public sealed class WorldSaveStore
         var now = DateTime.UtcNow;
         var metadata = new WorldMetadata
         {
+            FormatVersion = CurrentFormatVersion,
             Name = worldName,
             Seed = seed,
             CreatedUtc = now,
@@ -67,6 +70,12 @@ public sealed class WorldSaveStore
 
         var metadata = JsonSerializer.Deserialize<WorldMetadata>(File.ReadAllText(metadataPath), JsonOptions)
             ?? throw new InvalidOperationException($"Failed to deserialize world metadata for '{worldName}'.");
+
+        if (metadata.FormatVersion != CurrentFormatVersion)
+        {
+            throw new InvalidOperationException(
+                $"World '{worldName}' uses format version {metadata.FormatVersion}, but this build requires version {CurrentFormatVersion}. Create a new world for the new height format.");
+        }
 
         Directory.CreateDirectory(Path.Combine(worldPath, "chunks"));
         return new WorldSaveStore(worldsRootPath, worldPath, metadata);
@@ -115,10 +124,10 @@ public sealed class WorldSaveStore
 
         var blocks = snapshot.Blocks;
         writer.Write(blocks.Length);
-        for (var i = 0; i < blocks.Length; i++)
-        {
-            writer.Write(blocks[i]);
-        }
+
+        var blockBytes = new byte[blocks.Length * sizeof(ushort)];
+        Buffer.BlockCopy(blocks, 0, blockBytes, 0, blockBytes.Length);
+        writer.Write(blockBytes);
     }
 
     public bool TryLoadChunk(ChunkCoord coord, out ChunkSnapshotData snapshot)
@@ -144,11 +153,14 @@ public sealed class WorldSaveStore
             throw new InvalidDataException($"Chunk file '{path}' contains {blockCount} blocks instead of {Chunk.BlockCount}.");
         }
 
-        var blocks = new ushort[blockCount];
-        for (var i = 0; i < blockCount; i++)
+        var blockBytes = reader.ReadBytes(blockCount * sizeof(ushort));
+        if (blockBytes.Length != blockCount * sizeof(ushort))
         {
-            blocks[i] = reader.ReadUInt16();
+            throw new EndOfStreamException($"Chunk file '{path}' ended before all block data could be read.");
         }
+
+        var blocks = new ushort[blockCount];
+        Buffer.BlockCopy(blockBytes, 0, blocks, 0, blockBytes.Length);
 
         snapshot = new ChunkSnapshotData(blocks, aura);
         return true;

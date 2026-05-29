@@ -29,6 +29,7 @@ public sealed class GameApplication : IDisposable
     private VoxelWorld? _world;
     private FirstPersonPlayer? _player;
     private DroppedBlockManager? _drops;
+    private BlockBreakParticleManager? _blockParticles;
     private GameMode _mode = GameMode.MainMenu;
     private MenuScreen _menuScreen = MenuScreen.Main;
     private int _mainMenuSelectedIndex;
@@ -47,6 +48,7 @@ public sealed class GameApplication : IDisposable
     private double _runningSeconds;
     private bool _disposedRuntime;
     private const float BlockBreakSeconds = 0.65f;
+    private const float MaxGameplayDeltaSeconds = 1f / 15f;
     private const int MainMenuSingleplayerIndex = 0;
     private const int MainMenuSettingsIndex = 1;
     private const int MainMenuExitIndex = 2;
@@ -67,7 +69,7 @@ public sealed class GameApplication : IDisposable
         var options = WindowOptions.DefaultVulkan;
         options.Title = _settings.WindowTitle;
         options.Size = new Vector2D<int>(_settings.WindowWidth, _settings.WindowHeight);
-        options.VSync = true;
+        options.VSync = _settings.EnableVSync;
 
         _window = Window.Create(options);
         _selectedRenderDistance = _settings.RenderDistanceChunks;
@@ -95,6 +97,7 @@ public sealed class GameApplication : IDisposable
     private void OnUpdate(double deltaSeconds)
     {
         var dt = (float)deltaSeconds;
+        var gameplayDt = Math.Min(dt, MaxGameplayDeltaSeconds);
         _runningSeconds += deltaSeconds;
         _timer.Update(deltaSeconds);
         _input.UpdateFrame();
@@ -119,7 +122,7 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
-        if (_world is null || _player is null || _drops is null)
+        if (_world is null || _player is null || _drops is null || _blockParticles is null)
         {
             return;
         }
@@ -135,11 +138,12 @@ public sealed class GameApplication : IDisposable
             ResetBreaking();
         }
 
-        _player.Update(dt, _input);
+        _player.Update(gameplayDt, _input);
         _world.LoadAround(_player.Position);
 
-        HandleBlockInteraction(dt);
-        _drops.Update(dt, _player.Position, _hotbar);
+        HandleBlockInteraction(gameplayDt);
+        _drops.Update(gameplayDt, _player.Position, _hotbar);
+        _blockParticles.Update(gameplayDt);
 
         _world.RebuildDirtyMeshes();
         UpdateHud();
@@ -475,19 +479,26 @@ public sealed class GameApplication : IDisposable
         _world = new VoxelWorld(worldStore.Metadata.Seed, _selectedRenderDistance, worldStore);
         _player = new FirstPersonPlayer(_world, _settings.MouseSensitivity);
         _drops = new DroppedBlockManager(_world);
+        _blockParticles = new BlockBreakParticleManager(_world);
 
         var playerSave = worldStore.LoadPlayer();
         if (playerSave is not null)
         {
-            _player.SpawnAt(playerSave.Position, playerSave.YawDegrees, playerSave.PitchDegrees);
+            var safePosition = _world.EnsureSafeSpawnPosition(playerSave.Position);
+            _world.LoadAround(safePosition, immediate: true);
+            _world.RebuildDirtyMeshes(immediate: true);
+            _player.SpawnAt(safePosition, playerSave.YawDegrees, playerSave.PitchDegrees);
         }
         else
         {
-            _player.SpawnAt(_world.FindSpawnPosition(0, 0));
+            var spawn = _world.FindSpawnPosition(0, 0);
+            _world.LoadAround(spawn, immediate: true);
+            _world.RebuildDirtyMeshes(immediate: true);
+            _player.SpawnAt(spawn);
         }
 
-        _world.LoadAround(_player.Position);
-        _world.RebuildDirtyMeshes();
+        _world.LoadAround(_player.Position, immediate: true);
+        _world.RebuildDirtyMeshes(immediate: true);
         worldStore.Touch();
 
         _mode = GameMode.Playing;
@@ -497,7 +508,7 @@ public sealed class GameApplication : IDisposable
 
     private void HandleBlockInteraction(float dt)
     {
-        if (_world is null || _player is null || _drops is null)
+        if (_world is null || _player is null || _drops is null || _blockParticles is null)
         {
             return;
         }
@@ -530,6 +541,7 @@ public sealed class GameApplication : IDisposable
                 var blockPosition = hit.Value.BlockPosition;
                 var brokenBlock = hit.Value.BlockType;
                 _world.SetBlock(blockPosition.X, blockPosition.Y, blockPosition.Z, BlockType.Air);
+                _blockParticles.Spawn(brokenBlock, blockPosition);
                 _drops.Spawn(brokenBlock, blockPosition, _player.Camera.Forward * 1.6f + new System.Numerics.Vector3(0, 2.2f, 0));
                 ResetBreaking();
             }
@@ -556,7 +568,7 @@ public sealed class GameApplication : IDisposable
         var meshes = BuildSceneMeshes();
         var camera = _player?.Camera ?? new CameraState(new System.Numerics.Vector3(0, 64, -4), 0, 0);
         var renderDistance = _world?.RenderDistanceChunks ?? _selectedRenderDistance;
-        var scene = new RenderScene(meshes, camera, _hotbar, _hud, renderDistance);
+        var scene = new RenderScene(meshes, camera, _hotbar, _hud, renderDistance, (float)_runningSeconds);
         _renderer.Render(scene);
     }
 
@@ -572,6 +584,11 @@ public sealed class GameApplication : IDisposable
         if (_drops is not null)
         {
             meshes.AddRange(_drops.BuildRenderMeshes());
+        }
+
+        if (_blockParticles is not null)
+        {
+            meshes.AddRange(_blockParticles.BuildRenderMeshes());
         }
 
         if (_currentBreakTarget is { } breakTarget && _hud.BreakProgress > 0f)
@@ -592,6 +609,7 @@ public sealed class GameApplication : IDisposable
     {
         _hud.Fps = _timer.Fps;
         _hud.PlayerPosition = _player?.Position ?? default;
+        _hud.CurrentBiome = ResolveCurrentBiomeName();
         _hud.SelectedSlot = _hotbar.SelectedIndex;
         _hud.SelectedBlock = _hotbar.SelectedBlock;
         _hud.LoadedChunks = _world?.LoadedChunkCount ?? 0;
@@ -633,6 +651,38 @@ public sealed class GameApplication : IDisposable
         _hud.MenuSelectedWorldIndex = _selectedWorldIndex < _worldListScrollOffset
             ? -1
             : _selectedWorldIndex - _worldListScrollOffset;
+    }
+
+    private string ResolveCurrentBiomeName()
+    {
+        if (_world is null || _player is null)
+        {
+            return string.Empty;
+        }
+
+        var worldX = (int)MathF.Floor(_player.Position.X);
+        var worldZ = (int)MathF.Floor(_player.Position.Z);
+        return FormatBiomeName(_world.GetBiome(worldX, worldZ));
+    }
+
+    private static string FormatBiomeName(World.Generation.BiomeType biome)
+    {
+        return biome switch
+        {
+            World.Generation.BiomeType.Ocean => "Ocean",
+            World.Generation.BiomeType.Beach => "Beach",
+            World.Generation.BiomeType.Plains => "Plains",
+            World.Generation.BiomeType.Forest => "Forest",
+            World.Generation.BiomeType.Desert => "Desert",
+            World.Generation.BiomeType.Savanna => "Savanna",
+            World.Generation.BiomeType.Swamp => "Swamp",
+            World.Generation.BiomeType.Taiga => "Taiga",
+            World.Generation.BiomeType.Snow => "Snow",
+            World.Generation.BiomeType.Mountains => "Mountains",
+            World.Generation.BiomeType.River => "River",
+            World.Generation.BiomeType.Lake => "Lake",
+            _ => biome.ToString()
+        };
     }
 
     private void ResetBreaking()
@@ -788,6 +838,7 @@ public sealed class GameApplication : IDisposable
         _world = null;
         _player = null;
         _drops = null;
+        _blockParticles = null;
         _hotbar.Clear();
         _mode = GameMode.MainMenu;
         _input.SetCursorCaptured(false);

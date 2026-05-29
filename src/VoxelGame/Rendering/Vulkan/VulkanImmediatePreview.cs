@@ -1,4 +1,7 @@
 using System.Numerics;
+using ImageSharpImage = SixLabors.ImageSharp.Image;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using Silk.NET.Vulkan;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
@@ -8,10 +11,13 @@ namespace VoxelGame.Rendering.Vulkan;
 internal unsafe sealed class VulkanImmediatePreview
 {
     private readonly Vk _vk;
+    private readonly BlockRegistry _blocks = new();
+    private readonly Dictionary<int, TextureTile> _blockTiles;
 
     public VulkanImmediatePreview(Vk vk)
     {
         _vk = vk;
+        _blockTiles = LoadBlockTiles();
     }
 
     public void Draw(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene)
@@ -49,9 +55,19 @@ internal unsafe sealed class VulkanImmediatePreview
         }
 
         var pulse = scene.Hud.SelectedBlock is BlockType.ArcaneCrystal or BlockType.MagicOre ? 0.18f : 0.0f;
+        DrawStatusOverlay(commandBuffer, extent, scene, width);
         DrawCrosshair(commandBuffer, extent, width, height, new Rgba(0.72f + pulse, 0.94f, 0.88f, 1f));
         DrawHotbar(commandBuffer, extent, scene, width, height);
-        DrawHeldItem(commandBuffer, extent, scene.Hud.SelectedBlock, width, height);
+    }
+
+    private void DrawStatusOverlay(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width)
+    {
+        var biome = string.IsNullOrWhiteSpace(scene.Hud.CurrentBiome) ? "UNKNOWN" : scene.Hud.CurrentBiome.ToUpperInvariant();
+        var text = $"FPS {scene.Hud.Fps}  BIOME {biome}";
+        var scale = Math.Clamp(width / 640, 1, 2);
+        var textWidth = TextWidth(text, scale);
+        DrawRect(commandBuffer, extent, 10, 10, textWidth + 12, 7 * scale + 10, new Rgba(0.02f, 0.025f, 0.035f, 0.78f));
+        DrawText(commandBuffer, extent, text, 16, 15, scale, new Rgba(0.82f, 0.94f, 0.90f, 1f));
     }
 
     private void DrawMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -432,40 +448,184 @@ internal unsafe sealed class VulkanImmediatePreview
             var hotbarSlot = scene.Hotbar.Slots[i];
             if (!hotbarSlot.IsEmpty)
             {
-                DrawRect(commandBuffer, extent, x + slot / 4, y + slot / 4, slot / 2, slot / 2, BlockColor(hotbarSlot.Block));
-                DrawStackPips(commandBuffer, extent, x, y, slot, hotbarSlot.Count);
+                DrawHotbarBlock(commandBuffer, extent, x, y, slot, hotbarSlot.Block, selected);
+                DrawHotbarCount(commandBuffer, extent, x, y, slot, hotbarSlot.Count);
             }
         }
     }
 
-    private void DrawStackPips(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int slot, int count)
+    private void DrawHotbarBlock(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int slot, BlockType block, bool selected)
     {
-        var pipCount = Math.Clamp((count + 15) / 16, 1, 4);
-        var pipSize = Math.Max(2, slot / 11);
-        var startX = x + slot - pipCount * (pipSize + 2) - 3;
-        var startY = y + slot - pipSize - 4;
-
-        for (var i = 0; i < pipCount; i++)
-        {
-            DrawRect(commandBuffer, extent, startX + i * (pipSize + 2), startY, pipSize, pipSize, new Rgba(0.86f, 0.92f, 0.80f, 1f));
-        }
+        var clipBounds = new UiRect(x + 2, y + 2, Math.Max(1, slot - 4), Math.Max(1, slot - 4));
+        var center = new Vector2(x + slot * 0.50f, y + slot * 0.58f);
+        var scale = Math.Clamp(slot * 0.30f, 10f, 16f);
+        DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, -0.74f, 0.60f);
     }
 
-    private void DrawHeldItem(CommandBuffer commandBuffer, Extent2D extent, BlockType block, int width, int height)
+    private void DrawHotbarCount(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int slot, int count)
     {
-        if (block == BlockType.Air)
+        var text = count.ToString();
+        var scale = count >= 100 ? 1 : 2;
+        var textWidth = TextWidth(text, scale);
+        var textX = x + slot - textWidth - 4;
+        var textY = y + slot - 7 * scale - 3;
+
+        DrawText(commandBuffer, extent, text, textX + 1, textY + 1, scale, new Rgba(0.02f, 0.02f, 0.03f, 1f));
+        DrawText(commandBuffer, extent, text, textX, textY, scale, new Rgba(0.96f, 0.96f, 0.92f, 1f));
+    }
+
+    private static ProjectedVertex ProjectCubeVertex(Vector3 position, Vector2 center, float scale, float yaw, float pitch)
+    {
+        var rotated = Vector3.Transform(position, Matrix4x4.CreateRotationY(yaw) * Matrix4x4.CreateRotationX(pitch));
+        var screen = new Vector2(
+            center.X + rotated.X * scale,
+            center.Y - rotated.Y * scale);
+
+        return new ProjectedVertex(screen, rotated.Z);
+    }
+
+    private void DrawTexturedQuad(CommandBuffer commandBuffer, Extent2D extent, UiRect clipBounds, TextureTile texture, ProjectedVertex topLeft, ProjectedVertex topRight, ProjectedVertex bottomRight, ProjectedVertex bottomLeft)
+    {
+        DrawTexturedTriangle(
+            commandBuffer,
+            extent,
+            clipBounds,
+            texture,
+            new TexturedVertex(topLeft.Position, new Vector2(0f, 0f)),
+            new TexturedVertex(topRight.Position, new Vector2(1f, 0f)),
+            new TexturedVertex(bottomRight.Position, new Vector2(1f, 1f)));
+
+        DrawTexturedTriangle(
+            commandBuffer,
+            extent,
+            clipBounds,
+            texture,
+            new TexturedVertex(topLeft.Position, new Vector2(0f, 0f)),
+            new TexturedVertex(bottomRight.Position, new Vector2(1f, 1f)),
+            new TexturedVertex(bottomLeft.Position, new Vector2(0f, 1f)));
+    }
+
+    private void DrawTexturedTriangle(CommandBuffer commandBuffer, Extent2D extent, UiRect clipBounds, TextureTile texture, TexturedVertex a, TexturedVertex b, TexturedVertex c)
+    {
+        var minX = Math.Max(clipBounds.X, (int)MathF.Floor(MathF.Min(a.Position.X, MathF.Min(b.Position.X, c.Position.X))));
+        var maxX = Math.Min(clipBounds.X + clipBounds.Width - 1, (int)MathF.Ceiling(MathF.Max(a.Position.X, MathF.Max(b.Position.X, c.Position.X))));
+        var minY = Math.Max(clipBounds.Y, (int)MathF.Floor(MathF.Min(a.Position.Y, MathF.Min(b.Position.Y, c.Position.Y))));
+        var maxY = Math.Min(clipBounds.Y + clipBounds.Height - 1, (int)MathF.Ceiling(MathF.Max(a.Position.Y, MathF.Max(b.Position.Y, c.Position.Y))));
+
+        var area = Edge(a.Position, b.Position, c.Position);
+        if (MathF.Abs(area) < 0.001f || minX > maxX || minY > maxY)
         {
             return;
         }
 
-        var size = Math.Clamp(width / 11, 72, 128);
-        var x = width - size - width / 9;
-        var y = height - size - height / 8;
-        var color = BlockColor(block);
+        for (var py = minY; py <= maxY; py++)
+        {
+            for (var px = minX; px <= maxX; px++)
+            {
+                var p = new Vector2(px + 0.5f, py + 0.5f);
+                var w0 = Edge(b.Position, c.Position, p);
+                var w1 = Edge(c.Position, a.Position, p);
+                var w2 = Edge(a.Position, b.Position, p);
+                var hasNegative = w0 < 0f || w1 < 0f || w2 < 0f;
+                var hasPositive = w0 > 0f || w1 > 0f || w2 > 0f;
+                if (hasNegative && hasPositive)
+                {
+                    continue;
+                }
 
-        DrawRect(commandBuffer, extent, x + size / 7, y + size / 7, size, size, new Rgba(0.015f, 0.012f, 0.018f, 1f));
-        DrawRect(commandBuffer, extent, x, y, size, size, color);
-        DrawRect(commandBuffer, extent, x + size / 6, y + size / 6, size * 2 / 3, size * 2 / 3, new Rgba(color.R * 1.18f, color.G * 1.18f, color.B * 1.18f, 1f));
+                w0 /= area;
+                w1 /= area;
+                w2 /= area;
+
+                var uv = a.Uv * w0 + b.Uv * w1 + c.Uv * w2;
+                var color = texture.Sample(uv.X, uv.Y);
+                if (color.A <= 0.01f)
+                {
+                    continue;
+                }
+
+                DrawRect(commandBuffer, extent, px, py, 1, 1, color);
+            }
+        }
+    }
+
+    private static float Edge(Vector2 a, Vector2 b, Vector2 p)
+    {
+        return (p.X - a.X) * (b.Y - a.Y) - (p.Y - a.Y) * (b.X - a.X);
+    }
+
+    private TextureTile GetBlockTile(int textureIndex)
+    {
+        return _blockTiles.TryGetValue(textureIndex, out var tile)
+            ? tile
+            : TextureTile.Solid(new Rgba32(255, 0, 255, 255));
+    }
+
+    private static Dictionary<int, TextureTile> LoadBlockTiles()
+    {
+        var rootDirectory = Path.Combine(AppContext.BaseDirectory, "Assets", "textures");
+        var tiles = new Dictionary<int, TextureTile>();
+
+        foreach (var entry in BlockTextureAtlasBuilder.GetEntries())
+        {
+            var path = Path.Combine(rootDirectory, entry.FileName);
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            using var source = ImageSharpImage.Load<Rgba32>(path);
+            source.Mutate(context => context.Resize(new ResizeOptions
+            {
+                Size = new SixLabors.ImageSharp.Size(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize),
+                Sampler = KnownResamplers.NearestNeighbor
+            }));
+
+            var pixels = new Rgba32[BlockTextureAtlas.TileSize * BlockTextureAtlas.TileSize];
+            source.CopyPixelDataTo(pixels);
+            tiles[entry.Index] = new TextureTile(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize, pixels);
+        }
+
+        return tiles;
+    }
+
+    private void DrawHeldBlockViewModel(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var block = scene.Hud.SelectedBlock;
+        if (block == BlockType.Air || scene.Hud.ShowMenu)
+        {
+            return;
+        }
+
+        var size = Math.Clamp(width / 4, 180, 320);
+        var clipBounds = new UiRect(0, 0, width, height);
+        var center = new Vector2(width * 0.5f, height * 0.58f);
+        var scale = size * 0.55f;
+
+        DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, -0.78f, 0.52f);
+    }
+
+    private void DrawBlockPreview(CommandBuffer commandBuffer, Extent2D extent, BlockType block, UiRect clipBounds, Vector2 center, float scale, float yaw, float pitch)
+    {
+        var definition = _blocks[block];
+        var topTexture = GetBlockTile(definition.TopTextureIndex);
+        var frontTexture = GetBlockTile(definition.SideTextureIndex);
+        var sideTexture = GetBlockTile(definition.SideTextureIndex);
+        var vertices = new[]
+        {
+            ProjectCubeVertex(new Vector3(-1f, -1f, -1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(1f, -1f, -1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(1f, 1f, -1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(-1f, 1f, -1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(-1f, -1f, 1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(1f, -1f, 1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(1f, 1f, 1f), center, scale, yaw, pitch),
+            ProjectCubeVertex(new Vector3(-1f, 1f, 1f), center, scale, yaw, pitch)
+        };
+
+        DrawTexturedQuad(commandBuffer, extent, clipBounds, topTexture, vertices[3], vertices[2], vertices[6], vertices[7]);
+        DrawTexturedQuad(commandBuffer, extent, clipBounds, sideTexture, vertices[2], vertices[1], vertices[5], vertices[6]);
+        DrawTexturedQuad(commandBuffer, extent, clipBounds, frontTexture, vertices[7], vertices[6], vertices[5], vertices[4]);
     }
 
     private void DrawRect(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int width, int height, Rgba color)
@@ -641,6 +801,7 @@ internal unsafe sealed class VulkanImmediatePreview
             BlockType.CorruptedGrass => new Rgba(0.18f, 0.08f, 0.22f, 1f),
             BlockType.ArcaneCrystal => new Rgba(0.18f, 0.82f, 0.74f, 1f),
             BlockType.MagicOre => new Rgba(0.26f, 0.18f, 0.55f, 1f),
+            BlockType.Snow => new Rgba(0.92f, 0.94f, 0.98f, 1f),
             _ => new Rgba(0.04f, 0.04f, 0.045f, 1f)
         };
     }
@@ -706,4 +867,27 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private readonly record struct Rgba(float R, float G, float B, float A);
     private readonly record struct ProjectedFace(int X, int Y, int Width, int Height, float Depth, Rgba Color);
+
+    private readonly record struct TextureTile(int Width, int Height, Rgba32[] Pixels)
+    {
+        public static TextureTile Solid(Rgba32 color)
+        {
+            return new TextureTile(1, 1, [color]);
+        }
+
+        public Rgba Sample(float u, float v)
+        {
+            var sampleX = Math.Clamp((int)MathF.Round(u * (Width - 1)), 0, Width - 1);
+            var sampleY = Math.Clamp((int)MathF.Round(v * (Height - 1)), 0, Height - 1);
+            var pixel = Pixels[sampleY * Width + sampleX];
+            return new Rgba(
+                pixel.R / 255f,
+                pixel.G / 255f,
+                pixel.B / 255f,
+                pixel.A / 255f);
+        }
+    }
+
+    private readonly record struct ProjectedVertex(Vector2 Position, float Depth);
+    private readonly record struct TexturedVertex(Vector2 Position, Vector2 Uv);
 }

@@ -21,6 +21,28 @@ layout(set = 0, binding = 0) uniform CameraUniform
 layout(set = 0, binding = 1) uniform sampler2D blockAtlas;
 layout(set = 0, binding = 2) uniform sampler2D environmentAtlas;
 
+vec4 SampleAnimatedCloud(vec2 atlasUv, vec3 worldPosition, float timeSeconds)
+{
+    vec2 atlasSize = vec2(textureSize(environmentAtlas, 0));
+    vec2 inset = 0.5 / atlasSize;
+    vec2 tileMin = vec2(0.0, 0.0);
+    vec2 tileSpan = vec2(1.0, 0.5);
+    vec2 localUv = (atlasUv - (tileMin + inset)) / (tileSpan - inset * 2.0);
+
+    vec2 drift = vec2(timeSeconds * 0.0065, timeSeconds * 0.0018);
+    vec2 primaryUv = fract(localUv + drift);
+    vec2 detailUv = fract(localUv * 1.85 + drift * 1.65 + vec2(worldPosition.x, worldPosition.z) * 0.0007);
+
+    vec2 primaryAtlasUv = tileMin + inset + primaryUv * (tileSpan - inset * 2.0);
+    vec2 detailAtlasUv = tileMin + inset + detailUv * (tileSpan - inset * 2.0);
+
+    vec4 primary = texture(environmentAtlas, primaryAtlasUv);
+    vec4 detail = texture(environmentAtlas, detailAtlasUv);
+    float density = clamp(primary.a * 0.72 + detail.a * 0.58, 0.0, 1.0);
+    vec3 color = mix(primary.rgb, detail.rgb, 0.35);
+    return vec4(color, density);
+}
+
 void main()
 {
     bool isCloud = fragBlockType == 200;
@@ -28,7 +50,9 @@ void main()
     vec4 texel;
     if (isCloud || isSun)
     {
-        texel = texture(environmentAtlas, fragUv);
+        texel = isCloud
+            ? SampleAnimatedCloud(fragUv, fragWorldPosition, camera.cameraPosition.w)
+            : texture(environmentAtlas, fragUv);
     }
     else
     {
@@ -42,8 +66,10 @@ void main()
 
     if (fragBlockType == 100)
     {
-        float crack = 1.0 - texel.r;
-        outColor = vec4(vec3(0.02), crack * 0.85);
+        float crackMask = dot(texel.rgb, vec3(0.33333334));
+        float crackAlpha = texel.a * mix(0.45, 0.90, crackMask);
+        vec3 crackColor = vec3(0.06);
+        outColor = vec4(crackColor, crackAlpha);
         return;
     }
 
@@ -55,8 +81,12 @@ void main()
 
     if (isCloud)
     {
-        vec3 cloudColor = texel.rgb * fragTint * 0.92;
-        outColor = vec4(cloudColor, texel.a * 0.68);
+        vec3 normal = normalize(fragNormal);
+        float topLight = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+        float rim = pow(1.0 - clamp(dot(normalize(camera.cameraPosition.xyz - fragWorldPosition), normal), 0.0, 1.0), 1.5);
+        float shading = mix(0.78, 1.08, topLight) + rim * 0.08;
+        vec3 cloudColor = texel.rgb * fragTint * shading;
+        outColor = vec4(cloudColor, texel.a * 0.58);
         return;
     }
 

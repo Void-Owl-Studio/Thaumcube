@@ -1,145 +1,109 @@
-using VoxelGame.World.Blocks;
+using System.Numerics;
 using VoxelGame.World.Chunks;
 
 namespace VoxelGame.World.Generation;
 
 public sealed class WorldGenerator
 {
-    private readonly DeterministicNoise _noise;
+    private readonly WorldGenerationSettings _settings;
+    private readonly NoiseGenerator _noise;
+    private readonly ChunkGenerator _chunkGenerator;
     public int Seed { get; }
+    public WorldGenerationSettings Settings => _settings;
 
-    public WorldGenerator(int seed)
+    public WorldGenerator(int seed, WorldGenerationSettings? settings = null)
     {
         Seed = seed;
-        _noise = new DeterministicNoise(seed);
+        _settings = settings ?? WorldGenerationSettings.CreateDefault();
+        _noise = new NoiseGenerator(seed);
+
+        var heightMapGenerator = new HeightMapGenerator(_noise, _settings);
+        var temperatureMapGenerator = new TemperatureMapGenerator(_noise, _settings);
+        var moistureMapGenerator = new MoistureMapGenerator(_noise, _settings);
+        var lakeGenerator = new LakeGenerator(_settings);
+        var riverGenerator = new RiverGenerator(_noise, _settings, heightMapGenerator, lakeGenerator);
+        var biomeGenerator = new BiomeGenerator(_settings);
+        var roughnessGenerator = new RoughnessGenerator(_noise, _settings);
+        var caveGenerator = new CaveGenerator(_noise, _settings);
+
+        _chunkGenerator = new ChunkGenerator(
+            _settings,
+            _noise,
+            heightMapGenerator,
+            temperatureMapGenerator,
+            moistureMapGenerator,
+            riverGenerator,
+            biomeGenerator,
+            roughnessGenerator,
+            caveGenerator);
     }
 
     public void Generate(Chunk chunk)
     {
         chunk.Aura = BuildAura(chunk.Coord);
-        var baseX = chunk.Coord.X * Chunk.SizeX;
-        var baseZ = chunk.Coord.Z * Chunk.SizeZ;
-
-        for (var z = 0; z < Chunk.SizeZ; z++)
-        for (var x = 0; x < Chunk.SizeX; x++)
-        {
-            var worldX = baseX + x;
-            var worldZ = baseZ + z;
-            var height = GetTerrainHeight(worldX, worldZ);
-            var corruption = GetCorruption(worldX, worldZ);
-            var lowTerrain = height < 57;
-
-            for (var y = 0; y < Chunk.SizeY; y++)
-            {
-                var block = BuildTerrainBlock(worldX, y, worldZ, height, corruption, lowTerrain);
-                chunk.SetGeneratedBlock(x, y, z, block);
-            }
-        }
-
-        AddCrystalFormation(chunk);
-        chunk.MarkDirty();
+        _chunkGenerator.Generate(chunk);
     }
 
-    public int GetTerrainHeight(int worldX, int worldZ)
+    public int GetTerrainHeight(int worldX, int worldZ) => _chunkGenerator.SampleColumn(worldX, worldZ).VisibleSurfaceHeight;
+
+    public Vector3 GetGrassTint(int worldX, int worldY, int worldZ)
     {
-        var hills = _noise.Fractal2D(worldX, worldZ, 0.012f, 4);
-        var ridges = _noise.Fractal2D(worldX + 2000, worldZ - 2000, 0.035f, 2);
-        return 50 + (int)(hills * 24f) + (int)(ridges * 6f);
+        var column = _chunkGenerator.SampleColumn(worldX, worldZ);
+        var tint = GrassColorMap.Sample(column.Temperature, column.Moisture);
+        return column.Biome switch
+        {
+            BiomeType.Swamp => Lerp(tint, new Vector3(0.18f, 0.42f, 0.18f), 0.35f),
+            BiomeType.Taiga => Lerp(tint, new Vector3(0.34f, 0.46f, 0.30f), 0.22f),
+            BiomeType.Snow => new Vector3(0.82f, 0.86f, 0.84f),
+            BiomeType.Savanna => Lerp(tint, new Vector3(0.56f, 0.58f, 0.22f), 0.28f),
+            _ => tint
+        };
     }
 
-    public System.Numerics.Vector3 GetGrassTint(int worldX, int worldY, int worldZ)
+    public Vector3 GetFoliageTint(int worldX, int worldY, int worldZ)
     {
-        var temperatureNoise = _noise.Fractal2D(worldX - 1900, worldZ + 1400, 0.0042f, 3);
-        var moistureNoise = _noise.Fractal2D(worldX + 700, worldZ - 1100, 0.0048f, 3);
-        var corruption = GetCorruption(worldX, worldZ);
-        var elevationCooling = Math.Clamp((worldY - 52) / 42f, 0f, 0.35f);
-        var temperature = Math.Clamp(0.62f + temperatureNoise * 0.30f - elevationCooling, 0f, 1f);
-        var humidity = Math.Clamp(0.58f + moistureNoise * 0.34f + (0.5f - elevationCooling) * 0.08f, 0f, 1f);
-        return GrassColorMap.Sample(temperature, humidity, corruption);
+        var column = _chunkGenerator.SampleColumn(worldX, worldZ);
+        var tint = GrassColorMap.Sample(column.Temperature, column.Moisture);
+        return column.Biome switch
+        {
+            BiomeType.Swamp => Lerp(tint, new Vector3(0.24f, 0.44f, 0.20f), 0.32f),
+            BiomeType.Savanna => Lerp(tint, new Vector3(0.64f, 0.62f, 0.25f), 0.24f),
+            BiomeType.Snow => new Vector3(0.76f, 0.82f, 0.78f),
+            _ => tint
+        };
     }
 
-    private BlockType BuildTerrainBlock(int x, int y, int z, int height, float corruption, bool lowTerrain)
-    {
-        if (y > height)
-        {
-            return y <= 54 ? BlockType.Water : BlockType.Air;
-        }
+    public WorldColumnSample GetColumnSample(int worldX, int worldZ) => _chunkGenerator.SampleColumn(worldX, worldZ);
 
-        if (y < height - 6)
-        {
-            var cave = _noise.Value3D(x, y, z, 0.052f);
-            if (y > 12 && cave > 0.72f)
-            {
-                return BlockType.Air;
-            }
+    public BiomeType GetBiome(int worldX, int worldZ) => _chunkGenerator.SampleColumn(worldX, worldZ).Biome;
 
-            var ore = _noise.Value3D(x + 400, y - 80, z - 900, 0.085f);
-            if (y < 44 && ore > 0.83f)
-            {
-                return BlockType.MagicOre;
-            }
+    public float GetTemperature(int worldX, int worldZ) => _chunkGenerator.SampleColumn(worldX, worldZ).Temperature;
 
-            return BlockType.Stone;
-        }
+    public float GetCaveValue(int worldX, int worldY, int worldZ) => _chunkGenerator.GetCaveValue(worldX, worldY, worldZ);
 
-        if (y == height)
-        {
-            if (corruption > 0.68f)
-            {
-                return BlockType.CorruptedGrass;
-            }
-
-            return lowTerrain ? BlockType.Sand : BlockType.Grass;
-        }
-
-        return lowTerrain ? BlockType.Sand : BlockType.Dirt;
-    }
-
-    private void AddCrystalFormation(Chunk chunk)
-    {
-        var chance = _noise.Value2D(chunk.Coord.X, chunk.Coord.Z, 0.6f);
-        if (chance < 0.82f)
-        {
-            return;
-        }
-
-        var localX = 3 + (int)(_noise.Value2D(chunk.Coord.X + 11, chunk.Coord.Z - 7, 1.1f) * 10);
-        var localZ = 3 + (int)(_noise.Value2D(chunk.Coord.X - 17, chunk.Coord.Z + 5, 1.1f) * 10);
-        var worldX = chunk.Coord.X * Chunk.SizeX + localX;
-        var worldZ = chunk.Coord.Z * Chunk.SizeZ + localZ;
-        var surface = Math.Clamp(GetTerrainHeight(worldX, worldZ), 8, Chunk.SizeY - 8);
-        var height = 2 + (int)(_noise.Value2D(worldX, worldZ, 0.17f) * 4);
-
-        for (var y = 0; y < height; y++)
-        {
-            chunk.SetGeneratedBlock(localX, surface + y + 1, localZ, BlockType.ArcaneCrystal);
-            if (y == 0)
-            {
-                TrySet(chunk, localX + 1, surface + 1, localZ, BlockType.ArcaneCrystal);
-                TrySet(chunk, localX, surface + 1, localZ + 1, BlockType.ArcaneCrystal);
-            }
-        }
-    }
+    public WorldBlockSample GetBlockSample(int worldX, int worldY, int worldZ) => _chunkGenerator.SampleBlock(worldX, worldY, worldZ);
 
     private ChunkAura BuildAura(ChunkCoord coord)
     {
-        var density = _noise.Value2D(coord.X, coord.Z, 0.16f);
-        var corruption = _noise.Value2D(coord.X + 900, coord.Z - 350, 0.10f);
-        var stability = 1f - MathF.Abs(density - 0.5f);
-        var type = corruption > 0.68f ? "Blight" : density > 0.62f ? "Crystal" : "Verdant";
-        return new ChunkAura(density, corruption, stability, type);
-    }
-
-    private float GetCorruption(int worldX, int worldZ)
-    {
-        return _noise.Fractal2D(worldX + 1500, worldZ - 800, 0.007f, 3);
-    }
-
-    private static void TrySet(Chunk chunk, int x, int y, int z, BlockType type)
-    {
-        if (Chunk.ContainsLocal(x, y, z))
+        var worldX = coord.X * Chunk.SizeX + Chunk.SizeX / 2;
+        var worldZ = coord.Z * Chunk.SizeZ + Chunk.SizeZ / 2;
+        var column = _chunkGenerator.SampleColumn(worldX, worldZ);
+        var density = 0.25f + column.Moisture * 0.55f + column.River * 0.20f;
+        var stability = 1f - MathF.Abs(column.Continentalness - 0.55f);
+        var type = column.Biome switch
         {
-            chunk.SetGeneratedBlock(x, y, z, type);
-        }
+            BiomeType.Mountains => "Highland",
+            BiomeType.Ocean => "Tidal",
+            BiomeType.Swamp => "Mist",
+            BiomeType.Snow => "Frost",
+            _ => "Verdant"
+        };
+
+        return new ChunkAura(density, column.Lake, stability, type);
+    }
+
+    private static Vector3 Lerp(Vector3 a, Vector3 b, float t)
+    {
+        return a + (b - a) * t;
     }
 }

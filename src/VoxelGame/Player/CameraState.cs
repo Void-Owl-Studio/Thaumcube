@@ -17,14 +17,24 @@ public readonly record struct CameraState(Vector3 Position, float YawDegrees, fl
         }
     }
 
-    public Matrix4x4 ViewMatrix
+    public Vector3 Up
     {
         get
         {
             var forward = Forward;
             var rollRadians = MathF.PI / 180f * RollDegrees;
-            var up = Vector3.Transform(Vector3.UnitY, Matrix4x4.CreateFromAxisAngle(forward, rollRadians));
-            return Matrix4x4.CreateLookAt(Position, Position + forward, up);
+            return Vector3.Normalize(Vector3.Transform(Vector3.UnitY, Quaternion.CreateFromAxisAngle(forward, rollRadians)));
+        }
+    }
+
+    public Vector3 Right => Vector3.Normalize(Vector3.Cross(Forward, Up));
+
+    public Matrix4x4 ViewMatrix
+    {
+        get
+        {
+            var forward = Forward;
+            return Matrix4x4.CreateLookAt(Position, Position + forward, Up);
         }
     }
 }

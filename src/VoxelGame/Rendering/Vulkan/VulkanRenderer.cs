@@ -7,6 +7,7 @@ using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
 using VoxelGame.Core;
+using VoxelGame.Player;
 using VoxelGame.World.Chunks;
 using Buffer = Silk.NET.Vulkan.Buffer;
 using VkSemaphore = Silk.NET.Vulkan.Semaphore;
@@ -41,6 +42,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
     private DescriptorSetLayout _descriptorSetLayout;
     private PipelineLayout _pipelineLayout;
     private Pipeline _graphicsPipeline;
+    private Pipeline _transparentPipeline;
     private Framebuffer[] _framebuffers = [];
     private CommandPool _commandPool;
     private CommandBuffer[] _commandBuffers = [];
@@ -689,6 +691,9 @@ public unsafe sealed class VulkanRenderer : IDisposable
             };
 
             ThrowIfFailed(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _graphicsPipeline), "create graphics pipeline");
+
+            depthStencil.DepthWriteEnable = false;
+            ThrowIfFailed(_vk.CreateGraphicsPipelines(_device, default, 1, &pipelineInfo, null, out _transparentPipeline), "create transparent graphics pipeline");
         }
         finally
         {
@@ -769,9 +774,9 @@ public unsafe sealed class VulkanRenderer : IDisposable
             SType = StructureType.SamplerCreateInfo,
             MagFilter = Filter.Nearest,
             MinFilter = Filter.Nearest,
-            AddressModeU = SamplerAddressMode.ClampToEdge,
-            AddressModeV = SamplerAddressMode.ClampToEdge,
-            AddressModeW = SamplerAddressMode.ClampToEdge,
+            AddressModeU = SamplerAddressMode.Repeat,
+            AddressModeV = SamplerAddressMode.Repeat,
+            AddressModeW = SamplerAddressMode.Repeat,
             AnisotropyEnable = false,
             MaxAnisotropy = 1f,
             BorderColor = BorderColor.IntOpaqueBlack,
@@ -1024,20 +1029,46 @@ public unsafe sealed class VulkanRenderer : IDisposable
 
         CreateBuffer(
             vertexBufferSize,
-            BufferUsageFlags.VertexBufferBit,
+            BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out var vertexStagingBuffer,
+            out var vertexStagingMemory);
+
+        CreateBuffer(
+            vertexBufferSize,
+            BufferUsageFlags.TransferDstBit | BufferUsageFlags.VertexBufferBit,
+            MemoryPropertyFlags.DeviceLocalBit,
             out var vertexBuffer,
             out var vertexMemory);
 
         CreateBuffer(
             indexBufferSize,
-            BufferUsageFlags.IndexBufferBit,
+            BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out var indexStagingBuffer,
+            out var indexStagingMemory);
+
+        CreateBuffer(
+            indexBufferSize,
+            BufferUsageFlags.TransferDstBit | BufferUsageFlags.IndexBufferBit,
+            MemoryPropertyFlags.DeviceLocalBit,
             out var indexBuffer,
             out var indexMemory);
 
-        UploadBufferData(vertexMemory, mesh.Vertices);
-        UploadBufferData(indexMemory, mesh.Indices);
+        try
+        {
+            UploadBufferData(vertexStagingMemory, mesh.Vertices);
+            UploadBufferData(indexStagingMemory, mesh.Indices);
+            CopyBuffer(vertexStagingBuffer, vertexBuffer, vertexBufferSize);
+            CopyBuffer(indexStagingBuffer, indexBuffer, indexBufferSize);
+        }
+        finally
+        {
+            _vk.DestroyBuffer(_device, indexStagingBuffer, null);
+            _vk.FreeMemory(_device, indexStagingMemory, null);
+            _vk.DestroyBuffer(_device, vertexStagingBuffer, null);
+            _vk.FreeMemory(_device, vertexStagingMemory, null);
+        }
 
         return new GpuChunkMesh(
             mesh.Coord,
@@ -1095,7 +1126,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         var cameraUniform = new CameraUniform(
             view,
             projection,
-            new Vector4(camera.Position, 1f),
+            new Vector4(camera.Position, scene.ElapsedSeconds),
             new Vector4(_settings.FogColor, 1f),
             new Vector4(_settings.SkyLightColor, _settings.SkyLightStrength),
             new Vector4(fogStartDistance, fullFogDistance, _settings.FogHeightFalloff, _settings.AmbientLightStrength),
@@ -1143,7 +1174,6 @@ public unsafe sealed class VulkanRenderer : IDisposable
         };
 
         _vk.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
-        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
 
         var viewport = new Viewport(0f, 0f, _swapchainExtent.Width, _swapchainExtent.Height, 0f, 1f);
         var scissor = new Rect2D(new Offset2D(0, 0), _swapchainExtent);
@@ -1155,7 +1185,22 @@ public unsafe sealed class VulkanRenderer : IDisposable
             _vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, _pipelineLayout, 0, 1, descriptorSet, 0, null);
         }
 
-        foreach (var mesh in _gpuMeshes.Values)
+        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _graphicsPipeline);
+        foreach (var mesh in _gpuMeshes.Values.Where(mesh => !mesh.SourceMesh.IsTransparent))
+        {
+            var vertexBuffer = mesh.VertexBuffer;
+            var vertexOffset = 0UL;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &vertexOffset);
+            _vk.CmdBindIndexBuffer(commandBuffer, mesh.IndexBuffer, 0, IndexType.Uint32);
+            _vk.CmdDrawIndexed(commandBuffer, mesh.IndexCount, 1, 0, 0, 0);
+        }
+
+        _vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _transparentPipeline);
+        var visibleTransparentMeshes = _gpuMeshes.Values
+            .Where(mesh => mesh.SourceMesh.IsTransparent)
+            .OrderByDescending(mesh => Vector3.DistanceSquared(mesh.SourceMesh.SortCenter, scene.Camera.Position))
+            .ToArray();
+        foreach (var mesh in visibleTransparentMeshes)
         {
             var vertexBuffer = mesh.VertexBuffer;
             var vertexOffset = 0UL;
@@ -1254,8 +1299,21 @@ public unsafe sealed class VulkanRenderer : IDisposable
         return formats[0];
     }
 
-    private static PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> presentModes)
+    private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> presentModes)
     {
+        if (!_settings.EnableVSync)
+        {
+            if (presentModes.Contains(PresentModeKHR.ImmediateKhr))
+            {
+                return PresentModeKHR.ImmediateKhr;
+            }
+
+            if (presentModes.Contains(PresentModeKHR.MailboxKhr))
+            {
+                return PresentModeKHR.MailboxKhr;
+            }
+        }
+
         return presentModes.Contains(PresentModeKHR.MailboxKhr)
             ? PresentModeKHR.MailboxKhr
             : PresentModeKHR.FifoKhr;
@@ -1429,6 +1487,23 @@ public unsafe sealed class VulkanRenderer : IDisposable
         EndSingleTimeCommands(commandBuffer);
     }
 
+    private void CopyBuffer(Buffer source, Buffer destination, ulong size)
+    {
+        if (size == 0)
+        {
+            return;
+        }
+
+        var commandBuffer = BeginSingleTimeCommands();
+        var region = new BufferCopy
+        {
+            Size = size
+        };
+
+        _vk.CmdCopyBuffer(commandBuffer, source, destination, 1, &region);
+        EndSingleTimeCommands(commandBuffer);
+    }
+
     private CommandBuffer BeginSingleTimeCommands()
     {
         var allocInfo = new CommandBufferAllocateInfo
@@ -1586,6 +1661,12 @@ public unsafe sealed class VulkanRenderer : IDisposable
             _graphicsPipeline = default;
         }
 
+        if (_transparentPipeline.Handle != 0)
+        {
+            _vk.DestroyPipeline(_device, _transparentPipeline, null);
+            _transparentPipeline = default;
+        }
+
         if (_pipelineLayout.Handle != 0)
         {
             _vk.DestroyPipelineLayout(_device, _pipelineLayout, null);
@@ -1644,7 +1725,8 @@ public unsafe sealed class VulkanRenderer : IDisposable
         }
 
         _titleRefresh = 0;
-        _window.Title = $"{_settings.WindowTitle} | Vulkan chunks | FPS {scene.Hud.Fps} | Chunks {scene.Hud.LoadedChunks} | Slot {scene.Hud.SelectedSlot + 1}: {scene.Hud.SelectedBlock}";
+        var biome = string.IsNullOrWhiteSpace(scene.Hud.CurrentBiome) ? "Unknown" : scene.Hud.CurrentBiome;
+        _window.Title = $"{_settings.WindowTitle} | Vulkan chunks | FPS {scene.Hud.Fps} | Biome {biome} | Chunks {scene.Hud.LoadedChunks} | Slot {scene.Hud.SelectedSlot + 1}: {scene.Hud.SelectedBlock}";
     }
 
     public void Dispose()

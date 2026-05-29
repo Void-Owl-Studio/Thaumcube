@@ -10,5 +10,8 @@ public enum BlockType : ushort
     Water = 5,
     CorruptedGrass = 6,
     ArcaneCrystal = 7,
-    MagicOre = 8
+    MagicOre = 8,
+    Snow = 9,
+    OakLog = 10,
+    OakLeaves = 11
 }

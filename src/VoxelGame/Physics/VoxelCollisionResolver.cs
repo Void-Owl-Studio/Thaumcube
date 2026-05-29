@@ -7,15 +7,24 @@ public readonly record struct CollisionMoveResult(Vector3 Delta, Vector3 Velocit
 
 public static class VoxelCollisionResolver
 {
+    private const float MaxStepDistance = 0.45f;
+
     public static CollisionMoveResult Move(VoxelWorld world, Aabb body, Vector3 velocity, float dt)
     {
-        var delta = velocity * dt;
         var actualDelta = Vector3.Zero;
         var grounded = false;
+        var totalDelta = velocity * dt;
+        var maxDistance = Math.Max(Math.Abs(totalDelta.X), Math.Max(Math.Abs(totalDelta.Y), Math.Abs(totalDelta.Z)));
+        var steps = Math.Max(1, (int)MathF.Ceiling(maxDistance / MaxStepDistance));
+        var stepDt = dt / steps;
 
-        ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(delta.X, 0, 0), Axis.X, ref grounded);
-        ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(0, delta.Y, 0), Axis.Y, ref grounded);
-        ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(0, 0, delta.Z), Axis.Z, ref grounded);
+        for (var step = 0; step < steps; step++)
+        {
+            var stepDelta = velocity * stepDt;
+            ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(stepDelta.X, 0, 0), Axis.X, ref grounded);
+            ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(0, stepDelta.Y, 0), Axis.Y, ref grounded);
+            ResolveAxis(world, ref body, ref velocity, ref actualDelta, new Vector3(0, 0, stepDelta.Z), Axis.Z, ref grounded);
+        }
 
         return new CollisionMoveResult(actualDelta, velocity, grounded);
     }

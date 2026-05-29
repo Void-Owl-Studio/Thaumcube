@@ -15,8 +15,13 @@ public static class BlockTextureAtlas
     public const int CorruptedGrass = 6;
     public const int ArcaneCrystal = 7;
     public const int MagicOre = 8;
-    public const int DestroyStageStart = 9;
-    public const int TextureCount = 19;
+    public const int Snow = 9;
+    public const int OakLogSide = 10;
+    public const int OakLogTop = 11;
+    public const int OakLeaves = 12;
+    public const int DestroyStageStart = 13;
+    public const int WaterEdge = 23;
+    public const int TextureCount = 24;
 
     public const int PaddedTileSize = TileSize + TilePadding * 2;
 

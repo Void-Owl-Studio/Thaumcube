@@ -40,7 +40,7 @@ internal sealed class BlockTextureAtlasBuilder
         return new AtlasImage(atlasWidth, atlasHeight, pixels);
     }
 
-    private static IReadOnlyList<AtlasEntry> GetEntries()
+    internal static IReadOnlyList<AtlasEntry> GetEntries()
     {
         var entries = new List<AtlasEntry>
         {
@@ -52,7 +52,12 @@ internal sealed class BlockTextureAtlasBuilder
             new(BlockTextureAtlas.Water, "block/water_still.png"),
             new(BlockTextureAtlas.CorruptedGrass, "block/sculk.png"),
             new(BlockTextureAtlas.ArcaneCrystal, "block/amethyst_block.png"),
-            new(BlockTextureAtlas.MagicOre, "block/diamond_ore.png")
+            new(BlockTextureAtlas.MagicOre, "block/diamond_ore.png"),
+            new(BlockTextureAtlas.Snow, "block/snow.png"),
+            new(BlockTextureAtlas.OakLogSide, "block/oak_log.png"),
+            new(BlockTextureAtlas.OakLogTop, "block/oak_log_top.png"),
+            new(BlockTextureAtlas.OakLeaves, "block/oak_leaves.png"),
+            new(BlockTextureAtlas.WaterEdge, "block/water_flow.png")
         };
 
         for (var i = 0; i < 10; i++)
@@ -100,5 +105,5 @@ internal sealed class BlockTextureAtlasBuilder
 
     internal readonly record struct AtlasImage(int Width, int Height, byte[] Pixels);
 
-    private readonly record struct AtlasEntry(int Index, string FileName);
+    internal readonly record struct AtlasEntry(int Index, string FileName);
 }

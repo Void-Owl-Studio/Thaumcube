@@ -7,6 +7,7 @@ public sealed class GameSettings
     public string WindowTitle { get; init; } = "VoxelGame - Arcane Voxel Prototype";
     public int WindowWidth { get; init; } = 1280;
     public int WindowHeight { get; init; } = 720;
+    public bool EnableVSync { get; init; } = false;
     public int WorldSeed { get; init; } = 734_241;
     public int RenderDistanceChunks { get; init; } = 1;
     public int MinRenderDistanceChunks { get; init; } = 1;
@@ -16,6 +17,8 @@ public sealed class GameSettings
     public float CloudHeightBlocks { get; init; } = 90f;
     public float CloudTileSizeBlocks { get; init; } = 384f;
     public int CloudTileRadius { get; init; } = 1;
+    public float CloudVolumeThicknessBlocks { get; init; } = 10f;
+    public float CloudTextureScaleBlocks { get; init; } = 96f;
     public float SunDistanceBlocks { get; init; } = 180f;
     public float SunSizeBlocks { get; init; } = 28f;
     public float CameraFieldOfViewDegrees { get; init; } = 70f;
