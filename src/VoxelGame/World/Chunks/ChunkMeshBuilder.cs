@@ -36,14 +36,16 @@ public sealed class ChunkMeshBuilder
             new[] { new Vector2(0, 1), new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1) })
     ];
 
-    public ChunkRenderMesh Build(VoxelWorld world, Chunk chunk)
+    public ChunkRenderMesh BuildSection(VoxelWorld world, Chunk chunk, int sectionIndex)
     {
         var vertices = new List<VoxelVertex>(2048);
         var indices = new List<uint>(4096);
         var baseX = chunk.Coord.X * Chunk.SizeX;
         var baseZ = chunk.Coord.Z * Chunk.SizeZ;
+        var minY = sectionIndex * Chunk.MeshSectionHeight;
+        var maxY = minY + Chunk.MeshSectionHeight;
 
-        for (var y = 0; y < Chunk.SizeY; y++)
+        for (var y = minY; y < maxY; y++)
         for (var z = 0; z < Chunk.SizeZ; z++)
         for (var x = 0; x < Chunk.SizeX; x++)
         {
@@ -70,7 +72,7 @@ public sealed class ChunkMeshBuilder
             }
         }
 
-        return new ChunkRenderMesh(chunk.Coord, vertices, indices);
+        return new ChunkRenderMesh(chunk.Coord, vertices, indices, $"chunk:{chunk.Coord.X},{chunk.Coord.Z}:section:{sectionIndex}");
     }
 
     private static void AddFace(List<VoxelVertex> vertices, List<uint> indices, Vector3 origin, Face face, int textureIndex, BlockType block, Vector3 tint)

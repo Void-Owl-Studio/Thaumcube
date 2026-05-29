@@ -19,11 +19,9 @@ public sealed class ChunkManager
 
     public int RenderDistance => _renderDistance;
     public int LoadedChunkCount => _chunks.Count;
-    public int VisibleMeshCount => _chunks.Values.Count(chunk => chunk.Mesh is { IsEmpty: false });
+    public int VisibleMeshCount => _chunks.Values.Sum(chunk => chunk.VisibleMeshCount);
 
-    public IEnumerable<ChunkRenderMesh> VisibleMeshes => _chunks.Values
-        .Select(chunk => chunk.Mesh)
-        .Where(mesh => mesh is { IsEmpty: false })!;
+    public IEnumerable<ChunkRenderMesh> VisibleMeshes => _chunks.Values.SelectMany(chunk => chunk.GetVisibleMeshes());
 
     public void LoadAround(Vector3 position)
     {
@@ -76,21 +74,26 @@ public sealed class ChunkManager
         var coord = ToChunkCoord(worldX, worldZ);
         var chunk = EnsureLoaded(coord);
         var local = ToLocal(worldX, worldZ);
-        chunk.SetBlock(local.X, y, local.Z, type);
+        if (!chunk.SetBlock(local.X, y, local.Z, type))
+        {
+            return;
+        }
 
-        if (local.X == 0) MarkDirty(new ChunkCoord(coord.X - 1, coord.Z));
-        if (local.X == Chunk.SizeX - 1) MarkDirty(new ChunkCoord(coord.X + 1, coord.Z));
-        if (local.Z == 0) MarkDirty(new ChunkCoord(coord.X, coord.Z - 1));
-        if (local.Z == Chunk.SizeZ - 1) MarkDirty(new ChunkCoord(coord.X, coord.Z + 1));
+        var sectionIndex = Chunk.GetSectionIndex(y);
+
+        if (local.X == 0) MarkDirty(new ChunkCoord(coord.X - 1, coord.Z), sectionIndex);
+        if (local.X == Chunk.SizeX - 1) MarkDirty(new ChunkCoord(coord.X + 1, coord.Z), sectionIndex);
+        if (local.Z == 0) MarkDirty(new ChunkCoord(coord.X, coord.Z - 1), sectionIndex);
+        if (local.Z == Chunk.SizeZ - 1) MarkDirty(new ChunkCoord(coord.X, coord.Z + 1), sectionIndex);
     }
 
     public void RebuildDirtyMeshes(VoxelWorld world)
     {
         foreach (var chunk in _chunks.Values)
         {
-            if (chunk.IsDirty)
+            foreach (var sectionIndex in chunk.GetDirtySectionIndexes().ToArray())
             {
-                chunk.SetMesh(_meshBuilder.Build(world, chunk));
+                chunk.SetSectionMesh(sectionIndex, _meshBuilder.BuildSection(world, chunk, sectionIndex));
             }
         }
     }
@@ -118,11 +121,11 @@ public sealed class ChunkManager
         return chunk;
     }
 
-    private void MarkDirty(ChunkCoord coord)
+    private void MarkDirty(ChunkCoord coord, int sectionIndex)
     {
         if (_chunks.TryGetValue(coord, out var chunk))
         {
-            chunk.MarkDirty();
+            chunk.MarkDirty(sectionIndex);
         }
     }
 
