@@ -9,6 +9,11 @@ public static class HudLayout
         return BuildCenteredButtons(width, height, ["SINGLEPLAYER", "SETTINGS", "EXIT"], width / 3, 180);
     }
 
+    public static MainMenuLayout BuildPauseMenu(int width, int height)
+    {
+        return BuildCenteredButtons(width, height, ["SETTINGS", "EXIT TO MAIN MENU"], Math.Max(250, width / 3), 156);
+    }
+
     public static SettingsLayout BuildSettingsMenu(int width, int height)
     {
         var scale = Math.Clamp(width / 480, 2, 4);
@@ -94,6 +99,12 @@ public static class HudLayout
     public static int? HitTestMainMenu(Vector2 mousePosition, int width, int height)
     {
         var layout = BuildMainMenu(width, height);
+        return HitTestButtons(mousePosition, layout.Items);
+    }
+
+    public static int? HitTestPauseMenu(Vector2 mousePosition, int width, int height)
+    {
+        var layout = BuildPauseMenu(width, height);
         return HitTestButtons(mousePosition, layout.Items);
     }
 

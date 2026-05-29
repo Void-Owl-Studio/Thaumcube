@@ -13,9 +13,11 @@ public sealed class HudState
     public BlockType SelectedBlock { get; set; }
     public BlockType TargetedBlock { get; set; }
     public float BreakProgress { get; set; }
-    public bool ShowMainMenu { get; set; }
+    public bool ShowMenu { get; set; }
+    public bool ShowPauseOverlay { get; set; }
     public MenuScreen MenuScreen { get; set; }
     public int MainMenuSelectedIndex { get; set; }
+    public int PauseMenuSelectedIndex { get; set; }
     public int MenuSelectedWorldIndex { get; set; } = -1;
     public int MenuSelectedActionIndex { get; set; }
     public string MenuTitle { get; set; } = "VOXELGAME";

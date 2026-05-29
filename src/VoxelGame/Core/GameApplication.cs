@@ -32,6 +32,7 @@ public sealed class GameApplication : IDisposable
     private GameMode _mode = GameMode.MainMenu;
     private MenuScreen _menuScreen = MenuScreen.Main;
     private int _mainMenuSelectedIndex;
+    private int _pauseMenuSelectedIndex;
     private int _selectedRenderDistance;
     private int _selectedWorldIndex = -1;
     private int _worldListScrollOffset;
@@ -40,6 +41,7 @@ public sealed class GameApplication : IDisposable
     private int _createWorldActionIndex;
     private string _newWorldName = string.Empty;
     private string _menuStatusText = string.Empty;
+    private MenuScreen _settingsBackScreen = MenuScreen.Main;
     private VoxelRaycastHit? _currentBreakTarget;
     private float _breakProgressSeconds;
     private double _runningSeconds;
@@ -48,6 +50,8 @@ public sealed class GameApplication : IDisposable
     private const int MainMenuSingleplayerIndex = 0;
     private const int MainMenuSettingsIndex = 1;
     private const int MainMenuExitIndex = 2;
+    private const int PauseMenuSettingsIndex = 0;
+    private const int PauseMenuExitToMainMenuIndex = 1;
     private const int SingleplayerCreateIndex = 0;
     private const int SingleplayerLoadIndex = 1;
     private const int SingleplayerDeleteIndex = 2;
@@ -101,7 +105,7 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
-        if (_mode == GameMode.MainMenu)
+        if (_mode is GameMode.MainMenu or GameMode.Paused)
         {
             UpdateMenu();
             UpdateHud();
@@ -110,7 +114,7 @@ public sealed class GameApplication : IDisposable
 
         if (_input.ExitRequested)
         {
-            ReturnToMainMenu();
+            PauseGame();
             UpdateHud();
             return;
         }
@@ -147,6 +151,9 @@ public sealed class GameApplication : IDisposable
         {
             case MenuScreen.Main:
                 UpdateMainMenu();
+                break;
+            case MenuScreen.Pause:
+                UpdatePauseMenu();
                 break;
             case MenuScreen.Singleplayer:
                 UpdateSingleplayerMenu();
@@ -257,6 +264,40 @@ public sealed class GameApplication : IDisposable
         }
     }
 
+    private void UpdatePauseMenu()
+    {
+        var hoveredMenuItem = HudLayout.HitTestPauseMenu(_input.MousePosition, _window.Size.X, _window.Size.Y);
+        if (hoveredMenuItem.HasValue)
+        {
+            _pauseMenuSelectedIndex = hoveredMenuItem.Value;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
+        {
+            _pauseMenuSelectedIndex = (_pauseMenuSelectedIndex + 1) % 2;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S))
+        {
+            _pauseMenuSelectedIndex = (_pauseMenuSelectedIndex + 1) % 2;
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
+        {
+            ActivatePauseMenu(_pauseMenuSelectedIndex);
+        }
+
+        if (_input.LeftPressedThisFrame && hoveredMenuItem.HasValue)
+        {
+            ActivatePauseMenu(hoveredMenuItem.Value);
+        }
+
+        if (_input.ExitRequested)
+        {
+            ResumeGame();
+        }
+    }
+
     private void UpdateSettingsMenu()
     {
         var hoveredSlider = HudLayout.HitTestSettingsSlider(_input.MousePosition, _window.Size.X, _window.Size.Y);
@@ -287,17 +328,17 @@ public sealed class GameApplication : IDisposable
 
         if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
         {
-            OpenMainMenu();
+            CloseSettingsMenu();
         }
 
         if (_input.LeftPressedThisFrame && hoveredAction.HasValue)
         {
-            OpenMainMenu();
+            CloseSettingsMenu();
         }
 
         if (_input.ExitRequested)
         {
-            OpenMainMenu();
+            CloseSettingsMenu();
         }
     }
 
@@ -380,6 +421,18 @@ public sealed class GameApplication : IDisposable
         }
 
         _window.Close();
+    }
+
+    private void ActivatePauseMenu(int menuIndex)
+    {
+        _pauseMenuSelectedIndex = menuIndex;
+        if (menuIndex == PauseMenuSettingsIndex)
+        {
+            OpenSettingsMenu(MenuScreen.Pause);
+            return;
+        }
+
+        ReturnToMainMenu();
     }
 
     private void ActivateSingleplayerAction(int actionIndex)
@@ -543,18 +596,22 @@ public sealed class GameApplication : IDisposable
         _hud.SelectedBlock = _hotbar.SelectedBlock;
         _hud.LoadedChunks = _world?.LoadedChunkCount ?? 0;
         _hud.VisibleChunkMeshes = _world?.VisibleMeshCount ?? 0;
-        _hud.ShowMainMenu = _mode == GameMode.MainMenu;
+        _hud.ShowMenu = _mode != GameMode.Playing;
+        _hud.ShowPauseOverlay = _mode == GameMode.Paused;
         _hud.MenuScreen = _menuScreen;
         _hud.MainMenuSelectedIndex = _mainMenuSelectedIndex;
+        _hud.PauseMenuSelectedIndex = _pauseMenuSelectedIndex;
         _hud.MenuSelectedActionIndex = _menuScreen switch
         {
             MenuScreen.CreateWorld => _createWorldActionIndex,
             MenuScreen.Settings => _settingsActionIndex,
+            MenuScreen.Pause => _pauseMenuSelectedIndex,
             _ => _singleplayerActionIndex
         };
         _hud.MenuTitle = _menuScreen switch
         {
             MenuScreen.Main => "VOXELGAME",
+            MenuScreen.Pause => "PAUSED",
             MenuScreen.Singleplayer => "SINGLEPLAYER",
             MenuScreen.Settings => "SETTINGS",
             MenuScreen.CreateWorld => "CREATE WORLD",
@@ -563,8 +620,9 @@ public sealed class GameApplication : IDisposable
         _hud.MenuSubtitle = _menuScreen switch
         {
             MenuScreen.Main => "ANCIENT ARCANE SANDBOX",
+            MenuScreen.Pause => "THE WORLD WAITS IN ARCANE STASIS",
             MenuScreen.Singleplayer => _availableWorlds.Count == 0 ? "NO WORLDS FOUND" : "SELECT A WORLD",
-            MenuScreen.Settings => "TUNE WORLD VIEW",
+            MenuScreen.Settings => _mode == GameMode.Paused ? "TUNE VIEW WHILE PAUSED" : "TUNE WORLD VIEW",
             MenuScreen.CreateWorld => "ENTER WORLD NAME",
             _ => string.Empty
         };
@@ -625,7 +683,13 @@ public sealed class GameApplication : IDisposable
 
     private void OpenSettingsMenu()
     {
+        OpenSettingsMenu(MenuScreen.Main);
+    }
+
+    private void OpenSettingsMenu(MenuScreen backScreen)
+    {
         _menuScreen = MenuScreen.Settings;
+        _settingsBackScreen = backScreen;
         _settingsActionIndex = SettingsBackIndex;
         ClearMenuStatus();
     }
@@ -732,6 +796,32 @@ public sealed class GameApplication : IDisposable
         RefreshWorldCatalog();
     }
 
+    private void PauseGame()
+    {
+        if (_mode != GameMode.Playing)
+        {
+            return;
+        }
+
+        _mode = GameMode.Paused;
+        _input.SetCursorCaptured(false);
+        ResetBreaking();
+        OpenPauseMenu();
+    }
+
+    private void ResumeGame()
+    {
+        if (_mode != GameMode.Paused)
+        {
+            return;
+        }
+
+        _mode = GameMode.Playing;
+        _input.SetCursorCaptured(true);
+        ResetBreaking();
+        ClearMenuStatus();
+    }
+
     private void SaveActiveWorld()
     {
         if (_activeWorldStore is null || _world is null)
@@ -825,9 +915,23 @@ public sealed class GameApplication : IDisposable
         _menuStatusText = string.Empty;
     }
 
+    private void OpenPauseMenu()
+    {
+        _menuScreen = MenuScreen.Pause;
+        _pauseMenuSelectedIndex = Math.Clamp(_pauseMenuSelectedIndex, PauseMenuSettingsIndex, PauseMenuExitToMainMenuIndex);
+        ClearMenuStatus();
+    }
+
+    private void CloseSettingsMenu()
+    {
+        _menuScreen = _settingsBackScreen;
+        ClearMenuStatus();
+    }
+
     private enum GameMode
     {
         MainMenu,
-        Playing
+        Playing,
+        Paused
     }
 }

@@ -42,9 +42,9 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawHud(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        if (scene.Hud.ShowMainMenu)
+        if (scene.Hud.ShowMenu)
         {
-            DrawMainMenu(commandBuffer, extent, scene, width, height);
+            DrawMenu(commandBuffer, extent, scene, width, height);
             return;
         }
 
@@ -54,9 +54,16 @@ internal unsafe sealed class VulkanImmediatePreview
         DrawHeldItem(commandBuffer, extent, scene.Hud.SelectedBlock, width, height);
     }
 
-    private void DrawMainMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    private void DrawMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.025f, 0.018f, 0.035f, 0.92f));
+        if (scene.Hud.ShowPauseOverlay)
+        {
+            DrawPauseBackdrop(commandBuffer, extent, width, height);
+        }
+        else
+        {
+            DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.025f, 0.018f, 0.035f, 0.92f));
+        }
 
         var scale = Math.Clamp(width / 320, 3, 5);
         var title = scene.Hud.MenuTitle;
@@ -70,6 +77,9 @@ internal unsafe sealed class VulkanImmediatePreview
         {
             case MenuScreen.Main:
                 DrawRootMenu(commandBuffer, extent, scene, width, height);
+                break;
+            case MenuScreen.Pause:
+                DrawPauseMenu(commandBuffer, extent, scene, width, height);
                 break;
             case MenuScreen.Singleplayer:
                 DrawWorldSelectionMenu(commandBuffer, extent, scene, width, height);
@@ -96,6 +106,33 @@ internal unsafe sealed class VulkanImmediatePreview
         }
     }
 
+    private void DrawPauseBackdrop(CommandBuffer commandBuffer, Extent2D extent, int width, int height)
+    {
+        const int tile = 10;
+        for (var y = 0; y < height; y += tile)
+        {
+            for (var x = 0; x < width; x += tile)
+            {
+                var variant = ((x / tile) + (y / tile)) & 1;
+                var innerSize = variant == 0 ? 8 : 6;
+                var offset = variant == 0 ? 1 : 2;
+                DrawRect(commandBuffer, extent, x + offset, y + offset, innerSize, innerSize, new Rgba(0.060f, 0.050f, 0.075f, 1f));
+            }
+        }
+
+        for (var y = 0; y < height; y += 18)
+        {
+            DrawRect(commandBuffer, extent, 0, y, width, 4, new Rgba(0.040f, 0.034f, 0.052f, 1f));
+        }
+
+        var panelWidth = Math.Clamp(width * 2 / 5, 280, 460);
+        var panelHeight = Math.Clamp(height / 3, 170, 250);
+        var panelX = (width - panelWidth) / 2;
+        var panelY = height / 4;
+        DrawRect(commandBuffer, extent, panelX - 6, panelY - 6, panelWidth + 12, panelHeight + 12, new Rgba(0.18f, 0.15f, 0.22f, 1f));
+        DrawRect(commandBuffer, extent, panelX, panelY, panelWidth, panelHeight, new Rgba(0.030f, 0.025f, 0.038f, 1f));
+    }
+
     private void DrawRootMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
         var options = new[] { "SINGLEPLAYER", "SETTINGS", "EXIT" };
@@ -106,6 +143,19 @@ internal unsafe sealed class VulkanImmediatePreview
         {
             var bounds = layout.Items[i].Bounds;
             DrawMenuButton(commandBuffer, extent, bounds, options[i], menuScale, i == scene.Hud.MainMenuSelectedIndex);
+        }
+    }
+
+    private void DrawPauseMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var options = new[] { "SETTINGS", "EXIT TO MAIN MENU" };
+        var layout = HudLayout.BuildPauseMenu(width, height);
+        var menuScale = layout.Scale;
+
+        for (var i = 0; i < options.Length; i++)
+        {
+            var bounds = layout.Items[i].Bounds;
+            DrawMenuButton(commandBuffer, extent, bounds, options[i], menuScale, i == scene.Hud.PauseMenuSelectedIndex);
         }
     }
 
