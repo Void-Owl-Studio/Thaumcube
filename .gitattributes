@@ -1,5 +1,0 @@
-# Auto detect text files and perform LF normalization
-* text=auto
-
-# Godot import metadata should be versioned, but hidden from noisy GitHub diffs.
-*.import linguist-generated=true -diff
