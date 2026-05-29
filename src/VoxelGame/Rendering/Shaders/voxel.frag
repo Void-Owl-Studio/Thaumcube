@@ -4,7 +4,19 @@ layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec2 fragUv;
 layout(location = 2) flat in uint fragBlockType;
 layout(location = 3) in vec3 fragTint;
+layout(location = 4) in vec3 fragWorldPosition;
 layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform CameraUniform
+{
+    mat4 view;
+    mat4 projection;
+    vec4 cameraPosition;
+    vec4 fogColor;
+    vec4 skyLightColor;
+    vec4 fogSettings;
+    vec4 lightDirection;
+} camera;
 
 layout(set = 0, binding = 1) uniform sampler2D blockAtlas;
 layout(set = 0, binding = 2) uniform sampler2D environmentAtlas;
@@ -48,14 +60,24 @@ void main()
         return;
     }
 
-    vec3 lightDir = normalize(vec3(0.35, 0.85, 0.25));
-    float light = max(dot(normalize(fragNormal), lightDir), 0.18);
+    vec3 normal = normalize(fragNormal);
+    vec3 lightDir = normalize(camera.lightDirection.xyz);
+    float diffuse = max(dot(normal, lightDir), 0.0);
+    float hemisphere = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    float skyLight = hemisphere * camera.skyLightColor.w;
+    float light = camera.fogSettings.w + diffuse * camera.lightDirection.w + skyLight;
     vec3 color = texel.rgb * fragTint * light;
 
     if (fragBlockType == 7 || fragBlockType == 8)
     {
         color += texel.rgb * 0.25;
     }
+
+    float distanceToCamera = distance(fragWorldPosition, camera.cameraPosition.xyz);
+    float fogFactor = smoothstep(camera.fogSettings.x, camera.fogSettings.y, distanceToCamera);
+    fogFactor *= exp2(-max(fragWorldPosition.y - camera.cameraPosition.y, 0.0) * camera.fogSettings.z);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    color = mix(color, camera.fogColor.xyz, fogFactor);
 
     float alpha = fragBlockType == 5 ? 0.72 * texel.a : texel.a;
     outColor = vec4(color, alpha);

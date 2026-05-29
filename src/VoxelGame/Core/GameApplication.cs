@@ -283,7 +283,8 @@ public sealed class GameApplication : IDisposable
     {
         var meshes = BuildSceneMeshes();
         var camera = _player?.Camera ?? new CameraState(new System.Numerics.Vector3(0, 64, -4), 0, 0);
-        var scene = new RenderScene(meshes, camera, _hotbar, _hud);
+        var renderDistance = _world?.RenderDistanceChunks ?? _selectedRenderDistance;
+        var scene = new RenderScene(meshes, camera, _hotbar, _hud, renderDistance);
         _renderer.Render(scene);
     }
 

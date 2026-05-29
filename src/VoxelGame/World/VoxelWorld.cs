@@ -11,6 +11,7 @@ public sealed class VoxelWorld
     private readonly ChunkManager _chunks;
 
     public BlockRegistry Blocks { get; } = new();
+    public int RenderDistanceChunks => _chunks.RenderDistance;
     public int LoadedChunkCount => _chunks.LoadedChunkCount;
     public int VisibleMeshCount => _chunks.VisibleMeshCount;
 

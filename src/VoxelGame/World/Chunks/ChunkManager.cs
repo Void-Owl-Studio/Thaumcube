@@ -17,6 +17,7 @@ public sealed class ChunkManager
         _renderDistance = Math.Max(1, renderDistance);
     }
 
+    public int RenderDistance => _renderDistance;
     public int LoadedChunkCount => _chunks.Count;
     public int VisibleMeshCount => _chunks.Values.Count(chunk => chunk.Mesh is { IsEmpty: false });
 

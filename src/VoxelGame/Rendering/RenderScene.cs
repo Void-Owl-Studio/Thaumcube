@@ -9,12 +9,14 @@ public sealed class RenderScene
     public CameraState Camera { get; }
     public Hotbar Hotbar { get; }
     public HudState Hud { get; }
+    public int RenderDistanceChunks { get; }
 
-    public RenderScene(IEnumerable<ChunkRenderMesh> chunkMeshes, CameraState camera, Hotbar hotbar, HudState hud)
+    public RenderScene(IEnumerable<ChunkRenderMesh> chunkMeshes, CameraState camera, Hotbar hotbar, HudState hud, int renderDistanceChunks)
     {
         ChunkMeshes = chunkMeshes.ToArray();
         Camera = camera;
         Hotbar = hotbar;
         Hud = hud;
+        RenderDistanceChunks = renderDistanceChunks;
     }
 }

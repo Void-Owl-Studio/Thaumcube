@@ -112,7 +112,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         UpdateWindowTitle(scene);
         _vk.WaitForFences(_device, 1, in _inFlight[0], true, ulong.MaxValue);
         SyncChunkMeshes(scene.ChunkMeshes);
-        UpdateCameraUniform(scene.Camera);
+        UpdateCameraUniform(scene);
 
         uint imageIndex = 0;
         var acquire = _swapchainApi.AcquireNextImage(_device, _swapchain, ulong.MaxValue, _imageAvailable[0], default, ref imageIndex);
@@ -317,7 +317,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
             Binding = 0,
             DescriptorType = DescriptorType.UniformBuffer,
             DescriptorCount = 1,
-            StageFlags = ShaderStageFlags.VertexBit
+            StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit
         };
 
         var atlasBinding = new DescriptorSetLayoutBinding
@@ -1072,16 +1072,34 @@ public unsafe sealed class VulkanRenderer : IDisposable
         }
     }
 
-    private void UpdateCameraUniform(Player.CameraState camera)
+    private void UpdateCameraUniform(Rendering.RenderScene scene)
     {
+        var camera = scene.Camera;
         var aspect = Math.Max(1f, _swapchainExtent.Width / (float)Math.Max(1u, _swapchainExtent.Height));
         var view = Matrix4x4.CreateLookAt(camera.Position, camera.Position + camera.Forward, Vector3.UnitY);
-        var projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 180f * 70f, aspect, 0.1f, 256f);
+        var projection = Matrix4x4.CreatePerspectiveFieldOfView(
+            MathF.PI / 180f * _settings.CameraFieldOfViewDegrees,
+            aspect,
+            _settings.CameraNearPlane,
+            _settings.CameraFarPlane);
         projection.M22 *= -1f;
-
+        var chunkRadius = (scene.RenderDistanceChunks + 0.5f) * Chunk.SizeX;
+        var visibleWorldRadius = chunkRadius * 1.4142135f;
+        var fullFogDistance = MathF.Max(
+            Chunk.SizeX * 2f,
+            visibleWorldRadius * _settings.FogFullDistanceRatio);
+        var fogStartDistance = MathF.Max(
+            Chunk.SizeX * 0.75f,
+            fullFogDistance * _settings.FogStartDistanceRatio);
+ 
         var cameraUniform = new CameraUniform(
             view,
-            projection);
+            projection,
+            new Vector4(camera.Position, 1f),
+            new Vector4(_settings.FogColor, 1f),
+            new Vector4(_settings.SkyLightColor, _settings.SkyLightStrength),
+            new Vector4(fogStartDistance, fullFogDistance, _settings.FogHeightFalloff, _settings.AmbientLightStrength),
+            new Vector4(_settings.SunLightDirection, _settings.DiffuseLightStrength));
 
         void* data = null;
         ThrowIfFailed(_vk.MapMemory(_device, _cameraUniformMemory, 0, (ulong)Marshal.SizeOf<CameraUniform>(), 0, &data), "map camera uniform memory");
@@ -1740,7 +1758,14 @@ public unsafe sealed class VulkanRenderer : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private readonly record struct CameraUniform(Matrix4x4 View, Matrix4x4 Projection);
+    private readonly record struct CameraUniform(
+        Matrix4x4 View,
+        Matrix4x4 Projection,
+        Vector4 CameraPosition,
+        Vector4 FogColor,
+        Vector4 SkyLightColor,
+        Vector4 FogSettings,
+        Vector4 LightDirection);
 
     private readonly record struct SwapchainSupportDetails(
         SurfaceCapabilitiesKHR Capabilities,
