@@ -8,11 +8,11 @@ const ChunkDataScript := preload("res://scripts/world/chunk_data.gd")
 var chunk_coords: Vector3i
 
 
-func apply_chunk_data(chunk_data, mesh_builder) -> void:
+func apply_chunk_data(chunk_data, mesh_builder, generator = null) -> void:
 	chunk_coords = chunk_data.chunk_coords
 	position = chunk_data.get_world_origin()
 
-	var mesh: ArrayMesh = mesh_builder.build_mesh(chunk_data)
+	var mesh: ArrayMesh = mesh_builder.build_mesh(chunk_data, generator)
 	_mesh_instance.mesh = mesh
 
 	if mesh.get_surface_count() == 0:

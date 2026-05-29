@@ -48,5 +48,5 @@ func _create_chunk(chunk_coords: Vector3i) -> void:
 	var chunk_data = _generator.generate(chunk_coords)
 	var chunk_node = CHUNK_SCENE.instantiate()
 	add_child(chunk_node)
-	chunk_node.apply_chunk_data(chunk_data, _mesh_builder)
+	chunk_node.apply_chunk_data(chunk_data, _mesh_builder, _generator)
 	_loaded_chunks[chunk_coords] = chunk_node

@@ -9,14 +9,17 @@ func _ready() -> void:
 	_create_environment()
 	_create_sun_light()
 
-	var player := PLAYER_SCENE.instantiate()
-	player.name = "Player"
-	add_child(player)
-	player.position = Vector3(8.0, 18.0, 8.0)
-
 	var world := WORLD_SCENE.instantiate()
 	world.name = "World"
 	add_child(world)
+
+	var player := PLAYER_SCENE.instantiate()
+	player.name = "Player"
+	add_child(player)
+	if world.has_method("get_spawn_position"):
+		player.position = world.get_spawn_position()
+	else:
+		player.position = Vector3(8.5, 20.0, 8.5)
 
 	if world.has_method("bind_player"):
 		world.bind_player(player)

@@ -32,3 +32,13 @@ func _process(_delta: float) -> void:
 
 func bind_player(player: Node3D) -> void:
 	_player = player
+	if _chunk_generator != null and _chunk_mesh_builder != null:
+		_chunk_manager.sync_chunks_around(_player.global_position)
+
+
+func get_spawn_position(spawn_x: int = 8, spawn_z: int = 8) -> Vector3:
+	if _chunk_generator == null:
+		_chunk_generator = ChunkGeneratorScript.new(world_seed)
+
+	var surface_height: int = _chunk_generator.get_surface_height(spawn_x, spawn_z)
+	return Vector3(spawn_x + 0.5, surface_height + 1.05, spawn_z + 0.5)

@@ -22,7 +22,7 @@ func _init(world_seed: int) -> void:
 	_temperature_noise.frequency = 0.01
 
 
-func generate(chunk_coords: Vector3i):
+func generate(chunk_coords: Vector3i) -> ChunkData:
 	var chunk_data = ChunkDataScript.new(chunk_coords)
 
 	for local_x in range(ChunkDataScript.SIZE_X):
@@ -53,6 +53,16 @@ func _sample_surface_height(world_x: int, world_z: int) -> int:
 
 func _sample_temperature(world_x: int, world_z: int) -> float:
 	return _temperature_noise.get_noise_2d(world_x, world_z)
+
+
+func get_block_id_at(world_position: Vector3i) -> int:
+	var surface_height := _sample_surface_height(world_position.x, world_position.z)
+	var biome_temperature := _sample_temperature(world_position.x, world_position.z)
+	return _resolve_block_for_position(world_position.y, surface_height, biome_temperature)
+
+
+func get_surface_height(world_x: int, world_z: int) -> int:
+	return _sample_surface_height(world_x, world_z)
 
 
 func _resolve_block_for_position(world_y: int, surface_height: int, biome_temperature: float) -> int:

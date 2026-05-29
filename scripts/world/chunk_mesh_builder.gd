@@ -45,8 +45,8 @@ const FACE_DEFINITIONS := [
 		]
 	},
 	{
-		"normal": Vector3i.FORWARD,
-		"neighbor_offset": Vector3i.FORWARD,
+		"normal": Vector3i.BACK,
+		"neighbor_offset": Vector3i.BACK,
 		"vertices": [
 			Vector3(0, 0, 1),
 			Vector3(1, 0, 1),
@@ -55,8 +55,8 @@ const FACE_DEFINITIONS := [
 		]
 	},
 	{
-		"normal": Vector3i.BACK,
-		"neighbor_offset": Vector3i.BACK,
+		"normal": Vector3i.FORWARD,
+		"neighbor_offset": Vector3i.FORWARD,
 		"vertices": [
 			Vector3(1, 0, 0),
 			Vector3(0, 0, 0),
@@ -84,10 +84,11 @@ func _init(block_registry, atlas) -> void:
 	_material = StandardMaterial3D.new()
 	_material.albedo_texture = _atlas.texture
 	_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_material.roughness = 1.0
 
 
-func build_mesh(chunk_data) -> ArrayMesh:
+func build_mesh(chunk_data, generator = null) -> ArrayMesh:
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -105,7 +106,8 @@ func build_mesh(chunk_data) -> ArrayMesh:
 				var definition = _block_registry.get_definition(block_id)
 				for face_definition in FACE_DEFINITIONS:
 					var neighbor_position: Vector3i = local_position + face_definition.neighbor_offset
-					if _block_registry.is_solid(chunk_data.get_block(neighbor_position)):
+					var neighbor_block_id := _get_neighbor_block_id(chunk_data, neighbor_position, generator)
+					if _block_registry.is_solid(neighbor_block_id):
 						continue
 
 					var face_normal: Vector3i = face_definition.normal
@@ -140,6 +142,22 @@ func build_mesh(chunk_data) -> ArrayMesh:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh.surface_set_material(0, _material)
 	return mesh
+
+
+func _get_neighbor_block_id(chunk_data, neighbor_position: Vector3i, generator) -> int:
+	if chunk_data.is_in_bounds(neighbor_position):
+		return chunk_data.get_block(neighbor_position)
+
+	if generator == null:
+		return ChunkDataScript.AIR_BLOCK_ID
+
+	var world_origin: Vector3 = chunk_data.get_world_origin()
+	var world_position := Vector3i(
+		int(world_origin.x) + neighbor_position.x,
+		int(world_origin.y) + neighbor_position.y,
+		int(world_origin.z) + neighbor_position.z
+	)
+	return generator.get_block_id_at(world_position)
 
 
 func _remap_uv(base_uv: Vector2, uv_rect: Rect2) -> Vector2:
