@@ -91,3 +91,12 @@ func _resolve_block_for_position(world_y: int, surface_height: int, biome_temper
 
 func _select_surface_block_id(_biome_temperature: float) -> int:
 	return _grass_block_id
+
+
+func duplicate_for_thread():
+	var duplicate_generator = ChunkGenerator.new(_seed)
+	duplicate_generator._air_block_id = _air_block_id
+	duplicate_generator._grass_block_id = _grass_block_id
+	duplicate_generator._dirt_block_id = _dirt_block_id
+	duplicate_generator._stone_block_id = _stone_block_id
+	return duplicate_generator

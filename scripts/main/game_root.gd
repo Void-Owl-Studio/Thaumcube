@@ -6,6 +6,7 @@ const PLAYER_SCENE := preload("res://scenes/player/player_controller.tscn")
 @export var show_debug_overlay := true
 
 var _player: Node3D
+var _world: Node3D
 var _debug_label: Label
 
 
@@ -17,6 +18,7 @@ func _ready() -> void:
 	var world := WORLD_SCENE.instantiate()
 	world.name = "World"
 	add_child(world)
+	_world = world
 
 	_player = PLAYER_SCENE.instantiate()
 	_player.name = "Player"
@@ -42,18 +44,41 @@ func _process(_delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	var player_input := Vector2.ZERO
 	var player_velocity := Vector3.ZERO
+	var chunk_stats: Dictionary = {}
+	if _world != null and _world.has_method("get_chunk_loading_stats"):
+		chunk_stats = _world.call("get_chunk_loading_stats")
+	var frame_profile: Dictionary = chunk_stats.get("frame_profile", {})
 	if _player.has_method("get_debug_movement_input"):
 		player_input = _player.get_debug_movement_input()
 	if "velocity" in _player:
 		player_velocity = _player.velocity
 
 	_debug_label.text = (
-		"Player pos: %s\n"
+		"FPS: %d | Frame: %.2f ms\n"
+		+ "Chunks: loaded=%d queued=%d active_jobs=%d pool=%d\n"
+		+ "Apply: visual=%d/%dus collision=%d/%dus neighbor=%dus\n"
+		+ "Queues: gen=%d visual=%d collision=%d unload=%d\n"
+		+ "Player pos: %s\n"
 		+ "Velocity: %s\n"
 		+ "Input: %s\n"
 		+ "Camera: %s\n"
 		+ "Focus keys: W=%s A=%s S=%s D=%s"
 	) % [
+		int(Engine.get_frames_per_second()),
+		1000.0 / maxf(1.0, Engine.get_frames_per_second()),
+		int(chunk_stats.get("loaded_chunks", 0)),
+		int(chunk_stats.get("queued_chunks", 0)),
+		int(chunk_stats.get("active_jobs", 0)),
+		int(chunk_stats.get("pooled_chunk_nodes", 0)),
+		int(frame_profile.get("visual_applied", 0)),
+		int(frame_profile.get("visual_apply_usec", 0)),
+		int(frame_profile.get("collision_applied", 0)),
+		int(frame_profile.get("collision_apply_usec", 0)),
+		int(frame_profile.get("neighbor_rebuild_usec", 0)),
+		int(chunk_stats.get("pending_generation", 0)),
+		int(chunk_stats.get("ready_visual_apply", 0)),
+		int(chunk_stats.get("ready_collision_apply", 0)),
+		int(chunk_stats.get("pending_unloads", 0)),
 		_format_vector3(_player.global_position),
 		_format_vector3(player_velocity),
 		player_input,
@@ -121,10 +146,12 @@ func _format_vector3(value: Vector3) -> String:
 func _create_environment() -> void:
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_SKY
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.12, 0.13, 0.16)
+	environment.ambient_light_energy = 0.22
 	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
 	environment.fog_enabled = true
-	environment.fog_light_energy = 0.35
+	environment.fog_light_energy = 0.18
 	environment.fog_density = 0.0025
 
 	var sky := Sky.new()
@@ -144,6 +171,6 @@ func _create_environment() -> void:
 func _create_sun_light() -> void:
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-52.0, -35.0, 0.0)
-	light.light_energy = 1.2
+	light.light_energy = 0.25
 	light.shadow_enabled = true
 	add_child(light)

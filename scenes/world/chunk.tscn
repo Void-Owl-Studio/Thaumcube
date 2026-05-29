@@ -5,6 +5,15 @@
 [node name="Chunk" type="StaticBody3D"]
 script = ExtResource("1_fwr3k")
 
-[node name="Mesh" type="MeshInstance3D" parent="."]
+[node name="Voxels" type="Node3D" parent="."]
 
 [node name="Collision" type="CollisionShape3D" parent="."]
+
+[node name="CollisionSection1" type="CollisionShape3D" parent="."]
+disabled = true
+
+[node name="CollisionSection2" type="CollisionShape3D" parent="."]
+disabled = true
+
+[node name="CollisionSection3" type="CollisionShape3D" parent="."]
+disabled = true

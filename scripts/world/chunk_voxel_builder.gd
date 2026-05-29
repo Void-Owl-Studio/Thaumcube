@@ -1,4 +1,4 @@
-class_name ChunkMeshBuilder
+class_name ChunkVoxelBuilder
 extends RefCounted
 
 const ChunkDataScript := preload("res://scripts/world/chunk_data.gd")
@@ -105,12 +105,13 @@ const FACE_LIGHT_MULTIPLIERS := [
 	0.8,
 	0.8
 ]
+const COLLISION_SECTION_HEIGHT := 8
 
 var _block_registry
 var _atlas
-var _material: StandardMaterial3D
 var _solid_cache: Dictionary = {}
 var _uv_rect_cache: Dictionary = {}
+var _material: StandardMaterial3D
 
 
 func _init(block_registry, atlas) -> void:
@@ -125,12 +126,35 @@ func _init(block_registry, atlas) -> void:
 	_material.vertex_color_use_as_albedo = true
 
 
-func build_mesh(chunk_data, world_accessor = null) -> ArrayMesh:
+func duplicate_for_thread() -> ChunkVoxelBuilder:
+	return ChunkVoxelBuilder.new(_block_registry, _atlas)
+
+
+func build_chunk(chunk_data, world_accessor = null, include_collision: bool = true) -> Dictionary:
+	var visual_result: Dictionary = build_chunk_visual_layout(chunk_data, world_accessor)
+	var collision_result: Dictionary = {}
+	if include_collision:
+		collision_result = build_chunk_collision_faces(chunk_data, world_accessor)
+
+	return {
+		"mesh": create_mesh_from_layout(visual_result),
+		"collision_faces": collision_result.get("collision_faces", PackedVector3Array()),
+		"stats": {
+			"face_count": visual_result.get("stats", {}).get("face_count", 0),
+			"vertex_count": visual_result.get("stats", {}).get("vertex_count", 0),
+			"triangle_count": visual_result.get("stats", {}).get("triangle_count", 0),
+			"collision_triangle_count": collision_result.get("stats", {}).get("collision_triangle_count", 0)
+		}
+	}
+
+
+func build_chunk_visual_layout(chunk_data, world_accessor = null) -> Dictionary:
 	var vertices: PackedVector3Array = PackedVector3Array()
 	var normals: PackedVector3Array = PackedVector3Array()
 	var uvs: PackedVector2Array = PackedVector2Array()
 	var colors: PackedColorArray = PackedColorArray()
 	var indices: PackedInt32Array = PackedInt32Array()
+	var rendered_face_count: int = 0
 	var next_index: int = 0
 
 	for local_x in range(ChunkDataScript.SIZE_X):
@@ -140,46 +164,116 @@ func build_mesh(chunk_data, world_accessor = null) -> ArrayMesh:
 				if not _is_solid(block_id):
 					continue
 
-				if not _is_neighbor_solid(chunk_data, local_x + 1, local_y, local_z, world_accessor):
-					next_index = _append_face(FACE_RIGHT, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
-				if not _is_neighbor_solid(chunk_data, local_x - 1, local_y, local_z, world_accessor):
-					next_index = _append_face(FACE_LEFT, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
-				if not _is_neighbor_solid(chunk_data, local_x, local_y + 1, local_z, world_accessor):
-					next_index = _append_face(FACE_UP, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
-				if not _is_neighbor_solid(chunk_data, local_x, local_y - 1, local_z, world_accessor):
-					next_index = _append_face(FACE_DOWN, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
-				if not _is_neighbor_solid(chunk_data, local_x, local_y, local_z + 1, world_accessor):
-					next_index = _append_face(FACE_BACK, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
-				if not _is_neighbor_solid(chunk_data, local_x, local_y, local_z - 1, world_accessor):
-					next_index = _append_face(FACE_FORWARD, local_x, local_y, local_z, block_id, chunk_data, world_accessor, vertices, normals, uvs, colors, indices, next_index)
+				for face_index in range(FACE_NORMALS.size()):
+					if _is_neighbor_solid_for_face(chunk_data, local_x, local_y, local_z, face_index, world_accessor):
+						continue
 
-	var mesh: ArrayMesh = ArrayMesh.new()
+					next_index = _append_visual_face(
+						face_index,
+						local_x,
+						local_y,
+						local_z,
+						block_id,
+						chunk_data,
+						world_accessor,
+						vertices,
+						normals,
+						uvs,
+						colors,
+						indices,
+						next_index
+					)
+					rendered_face_count += 1
+
+	return {
+		"vertices": vertices,
+		"normals": normals,
+		"uvs": uvs,
+		"colors": colors,
+		"indices": indices,
+		"stats": {
+			"face_count": rendered_face_count,
+			"vertex_count": rendered_face_count * 4,
+			"triangle_count": rendered_face_count * 2
+		}
+	}
+
+
+func build_chunk_collision_faces(chunk_data, world_accessor = null) -> Dictionary:
+	var collision_sections: Dictionary = {}
+	var collision_triangle_count: int = 0
+
+	for local_x in range(ChunkDataScript.SIZE_X):
+		for local_y in range(ChunkDataScript.SIZE_Y):
+			for local_z in range(ChunkDataScript.SIZE_Z):
+				var block_id: int = chunk_data.get_block_at(local_x, local_y, local_z)
+				if not _is_solid(block_id):
+					continue
+
+				for face_index in range(FACE_NORMALS.size()):
+					if _is_neighbor_solid_for_face(chunk_data, local_x, local_y, local_z, face_index, world_accessor):
+						continue
+					var section_index: int = int(local_y / COLLISION_SECTION_HEIGHT)
+					if not collision_sections.has(section_index):
+						collision_sections[section_index] = PackedVector3Array()
+					_append_collision_face(collision_sections[section_index], local_x, local_y, local_z, face_index)
+					collision_triangle_count += 2
+
+	var merged_collision_faces := PackedVector3Array()
+	for section_faces in collision_sections.values():
+		merged_collision_faces.append_array(section_faces)
+
+	return {
+		"collision_faces": merged_collision_faces,
+		"collision_sections": collision_sections,
+		"stats": {
+			"collision_triangle_count": collision_triangle_count,
+			"collision_section_count": collision_sections.size()
+		}
+	}
+
+
+func create_mesh_from_layout(build_result: Dictionary) -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var vertices: PackedVector3Array = build_result.get("vertices", PackedVector3Array())
 	if vertices.is_empty():
 		return mesh
 
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_NORMAL] = build_result.get("normals", PackedVector3Array())
+	arrays[Mesh.ARRAY_TEX_UV] = build_result.get("uvs", PackedVector2Array())
+	arrays[Mesh.ARRAY_COLOR] = build_result.get("colors", PackedColorArray())
+	arrays[Mesh.ARRAY_INDEX] = build_result.get("indices", PackedInt32Array())
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh.surface_set_material(0, _material)
 	return mesh
 
 
-func _is_neighbor_solid(chunk_data, local_x: int, local_y: int, local_z: int, world_accessor) -> bool:
-	if chunk_data.is_in_bounds_at(local_x, local_y, local_z):
-		return _is_solid(chunk_data.get_block_at(local_x, local_y, local_z))
-
-	if world_accessor == null:
-		return false
-
-	return _is_solid(world_accessor.get_block_id_at(_to_world_position(chunk_data, local_x, local_y, local_z)))
+func _is_neighbor_solid_for_face(chunk_data, local_x: int, local_y: int, local_z: int, face_index: int, world_accessor) -> bool:
+	var offset: Vector3i = FACE_NORMALS[face_index]
+	return _is_neighbor_solid(chunk_data, local_x + offset.x, local_y + offset.y, local_z + offset.z, world_accessor)
 
 
-func _append_face(
+func _append_collision_face(
+	collision_faces: PackedVector3Array,
+	local_x: int,
+	local_y: int,
+	local_z: int,
+	face_index: int
+) -> void:
+	var base_position: Vector3 = Vector3(local_x, local_y, local_z)
+	var face_vertices: Array = FACE_VERTICES[face_index]
+	collision_faces.append(base_position + face_vertices[0])
+	collision_faces.append(base_position + face_vertices[1])
+	collision_faces.append(base_position + face_vertices[2])
+	collision_faces.append(base_position + face_vertices[0])
+	collision_faces.append(base_position + face_vertices[2])
+	collision_faces.append(base_position + face_vertices[3])
+
+
+func _append_visual_face(
 	face_index: int,
 	local_x: int,
 	local_y: int,
@@ -197,11 +291,11 @@ func _append_face(
 	var base_position: Vector3 = Vector3(local_x, local_y, local_z)
 	var face_vertices: Array = FACE_VERTICES[face_index]
 	var face_uvs: Array = FACE_UVS[face_index]
-	var face_normal: Vector3 = Vector3(FACE_NORMALS[face_index])
 	var uv_rect: Rect2 = _get_uv_rect(block_id, face_index)
+	var face_normal: Vector3 = Vector3(FACE_NORMALS[face_index])
 	var face_light_color: Color = _get_face_light_color(chunk_data, world_accessor, local_x, local_y, local_z, face_index)
 
-	for vertex_index in 4:
+	for vertex_index in range(4):
 		vertices.append(base_position + face_vertices[vertex_index])
 		normals.append(face_normal)
 		uvs.append(_remap_uv(face_uvs[vertex_index], uv_rect))
@@ -214,6 +308,20 @@ func _append_face(
 	indices.append(next_index + 2)
 	indices.append(next_index + 3)
 	return next_index + 4
+
+
+func _is_neighbor_solid(chunk_data, local_x: int, local_y: int, local_z: int, world_accessor) -> bool:
+	if chunk_data.is_in_bounds_at(local_x, local_y, local_z):
+		return _is_solid(chunk_data.get_block_at(local_x, local_y, local_z))
+
+	if world_accessor == null:
+		return false
+
+	if world_accessor is Dictionary:
+		var neighbor_blocks: Dictionary = world_accessor.get("neighbor_blocks", {})
+		return _is_solid(int(neighbor_blocks.get(Vector3i(local_x, local_y, local_z), ChunkDataScript.AIR_BLOCK_ID)))
+
+	return _is_solid(world_accessor.get_block_id_at(_to_world_position(chunk_data, local_x, local_y, local_z)))
 
 
 func _is_solid(block_id: int) -> bool:
@@ -251,6 +359,10 @@ func _get_light_level(chunk_data, world_accessor, local_x: int, local_y: int, lo
 
 	if world_accessor == null:
 		return 0
+
+	if world_accessor is Dictionary:
+		var neighbor_lights: Dictionary = world_accessor.get("neighbor_lights", {})
+		return int(neighbor_lights.get(Vector3i(local_x, local_y, local_z), 0))
 
 	return world_accessor.get_light_level_at(_to_world_position(chunk_data, local_x, local_y, local_z))
 
