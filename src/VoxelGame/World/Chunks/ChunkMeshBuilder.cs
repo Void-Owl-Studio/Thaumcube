@@ -65,19 +65,20 @@ public sealed class ChunkMeshBuilder
                 }
 
                 var textureIndex = world.Blocks.GetFaceTextureIndex(block, face.Normal);
-                AddFace(vertices, indices, new Vector3(baseX + x, y, baseZ + z), face, textureIndex, block);
+                var tint = ResolveTint(world, block, face.Normal, baseX + x, y, baseZ + z);
+                AddFace(vertices, indices, new Vector3(baseX + x, y, baseZ + z), face, textureIndex, block, tint);
             }
         }
 
         return new ChunkRenderMesh(chunk.Coord, vertices, indices);
     }
 
-    private static void AddFace(List<VoxelVertex> vertices, List<uint> indices, Vector3 origin, Face face, int textureIndex, BlockType block)
+    private static void AddFace(List<VoxelVertex> vertices, List<uint> indices, Vector3 origin, Face face, int textureIndex, BlockType block, Vector3 tint)
     {
         var start = (uint)vertices.Count;
         for (var i = 0; i < 4; i++)
         {
-            vertices.Add(new VoxelVertex(origin + face.Corners[i], face.Normal, AtlasUv(face.Uvs[i], textureIndex), (uint)block));
+            vertices.Add(new VoxelVertex(origin + face.Corners[i], face.Normal, AtlasUv(face.Uvs[i], textureIndex), (uint)block, tint));
         }
 
         indices.Add(start);
@@ -112,7 +113,7 @@ public sealed class ChunkMeshBuilder
                     face.Normal.Y,
                     face.Normal.X * sin + face.Normal.Z * cos);
 
-                vertices.Add(new VoxelVertex(center + rotated, Vector3.Normalize(normal), AtlasUv(face.Uvs[i], textureIndex), (uint)block));
+                vertices.Add(new VoxelVertex(center + rotated, Vector3.Normalize(normal), AtlasUv(face.Uvs[i], textureIndex), (uint)block, ResolveItemTint(block, face.Normal)));
             }
 
             AddQuadIndices(indices, start);
@@ -133,7 +134,7 @@ public sealed class ChunkMeshBuilder
 
         for (var i = 0; i < 4; i++)
         {
-            vertices.Add(new VoxelVertex(origin + face.Corners[i] + offset, normal, AtlasUv(face.Uvs[i], textureIndex), BreakOverlayBlockId));
+            vertices.Add(new VoxelVertex(origin + face.Corners[i] + offset, normal, AtlasUv(face.Uvs[i], textureIndex), BreakOverlayBlockId, Vector3.One));
         }
 
         AddQuadIndices(indices, 0);
@@ -164,6 +165,38 @@ public sealed class ChunkMeshBuilder
         return new Vector2(
             tileX * tileWidth + insetX + localUv.X * (tileWidth - insetX * 2f),
             tileY * tileHeight + insetY + localUv.Y * (tileHeight - insetY * 2f));
+    }
+
+    private static Vector3 ResolveTint(VoxelWorld world, BlockType block, Vector3 faceNormal, int worldX, int worldY, int worldZ)
+    {
+        if (block != BlockType.Grass)
+        {
+            return Vector3.One;
+        }
+
+        if (faceNormal.Y < -0.5f)
+        {
+            return Vector3.One;
+        }
+
+        var grassTint = world.GetGrassTint(worldX, worldY, worldZ);
+        return faceNormal.Y > 0.5f ? grassTint : Vector3.Lerp(Vector3.One, grassTint, 0.55f);
+    }
+
+    private static Vector3 ResolveItemTint(BlockType block, Vector3 faceNormal)
+    {
+        if (block != BlockType.Grass)
+        {
+            return Vector3.One;
+        }
+
+        if (faceNormal.Y < -0.5f)
+        {
+            return Vector3.One;
+        }
+
+        var grassTint = new Vector3(0.48f, 0.76f, 0.30f);
+        return faceNormal.Y > 0.5f ? grassTint : Vector3.Lerp(Vector3.One, grassTint, 0.55f);
     }
 
     private readonly record struct Face(Vector3 Normal, Vector3[] Corners, Vector2[] Uvs);

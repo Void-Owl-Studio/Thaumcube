@@ -45,6 +45,16 @@ public sealed class WorldGenerator
         return 50 + (int)(hills * 24f) + (int)(ridges * 6f);
     }
 
+    public System.Numerics.Vector3 GetGrassTint(int worldX, int worldY, int worldZ)
+    {
+        var temperatureNoise = _noise.Fractal2D(worldX - 1900, worldZ + 1400, 0.0042f, 3);
+        var moistureNoise = _noise.Fractal2D(worldX + 700, worldZ - 1100, 0.0048f, 3);
+        var elevationCooling = Math.Clamp((worldY - 52) / 42f, 0f, 0.35f);
+        var temperature = Math.Clamp(0.62f + temperatureNoise * 0.30f - elevationCooling, 0f, 1f);
+        var humidity = Math.Clamp(0.58f + moistureNoise * 0.34f + (0.5f - elevationCooling) * 0.08f, 0f, 1f);
+        return GrassColorMap.Sample(temperature, humidity);
+    }
+
     private BlockType BuildTerrainBlock(int x, int y, int z, int height, float corruption, bool lowTerrain)
     {
         if (y > height)

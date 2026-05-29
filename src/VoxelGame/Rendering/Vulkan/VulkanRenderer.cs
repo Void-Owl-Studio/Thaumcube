@@ -534,7 +534,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
                 InputRate = VertexInputRate.Vertex
             };
 
-            var attributeDescriptions = stackalloc VertexInputAttributeDescription[4];
+            var attributeDescriptions = stackalloc VertexInputAttributeDescription[5];
             attributeDescriptions[0] = new VertexInputAttributeDescription
             {
                 Binding = 0,
@@ -563,13 +563,20 @@ public unsafe sealed class VulkanRenderer : IDisposable
                 Format = Format.R32Uint,
                 Offset = (uint)Marshal.OffsetOf<VoxelVertex>(nameof(VoxelVertex.BlockId))
             };
+            attributeDescriptions[4] = new VertexInputAttributeDescription
+            {
+                Binding = 0,
+                Location = 4,
+                Format = Format.R32G32B32Sfloat,
+                Offset = (uint)Marshal.OffsetOf<VoxelVertex>(nameof(VoxelVertex.Tint))
+            };
 
             var vertexInput = new PipelineVertexInputStateCreateInfo
             {
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &bindingDescription,
-                VertexAttributeDescriptionCount = 4,
+                VertexAttributeDescriptionCount = 5,
                 PVertexAttributeDescriptions = attributeDescriptions
             };
 

@@ -3,6 +3,7 @@
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec2 fragUv;
 layout(location = 2) flat in uint fragBlockType;
+layout(location = 3) in vec3 fragTint;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 1) uniform sampler2D blockAtlas;
@@ -19,7 +20,7 @@ void main()
 
     vec3 lightDir = normalize(vec3(0.35, 0.85, 0.25));
     float light = max(dot(normalize(fragNormal), lightDir), 0.18);
-    vec3 color = texel.rgb * light;
+    vec3 color = texel.rgb * fragTint * light;
 
     if (fragBlockType == 7 || fragBlockType == 8)
     {

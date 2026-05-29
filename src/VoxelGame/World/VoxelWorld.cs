@@ -49,6 +49,8 @@ public sealed class VoxelWorld
         return new Vector3(worldX + 0.5f, Math.Min(height + 3, Chunk.SizeY - 4), worldZ + 0.5f);
     }
 
+    public Vector3 GetGrassTint(int worldX, int worldY, int worldZ) => _generator.GetGrassTint(worldX, worldY, worldZ);
+
     public void RebuildDirtyMeshes() => _chunks.RebuildDirtyMeshes(this);
 
     public IEnumerable<ChunkRenderMesh> GetVisibleMeshes() => _chunks.VisibleMeshes;
