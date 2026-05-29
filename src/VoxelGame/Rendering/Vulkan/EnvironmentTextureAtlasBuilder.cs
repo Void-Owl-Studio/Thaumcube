@@ -29,6 +29,7 @@ internal sealed class EnvironmentTextureAtlasBuilder
                 Size = new Size(EnvironmentTextureAtlas.TileSize, EnvironmentTextureAtlas.TileSize),
                 Sampler = KnownResamplers.NearestNeighbor
             }));
+            ApplyTransparencyFixup(source, entry.Index);
 
             var tileX = (entry.Index % EnvironmentTextureAtlas.TilesPerRow) * EnvironmentTextureAtlas.TileSize;
             var tileY = (entry.Index / EnvironmentTextureAtlas.TilesPerRow) * EnvironmentTextureAtlas.TileSize;
@@ -47,6 +48,30 @@ internal sealed class EnvironmentTextureAtlasBuilder
             new AtlasEntry(EnvironmentTextureAtlas.Clouds, "environment/clouds.png"),
             new AtlasEntry(EnvironmentTextureAtlas.Sun, "environment/sun.png")
         ];
+    }
+
+    private static void ApplyTransparencyFixup(Image<Rgba32> image, int textureIndex)
+    {
+        if (textureIndex != EnvironmentTextureAtlas.Sun)
+        {
+            return;
+        }
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (var x = 0; x < row.Length; x++)
+                {
+                    ref var pixel = ref row[x];
+                    if (pixel.R == 0 && pixel.G == 0 && pixel.B == 0)
+                    {
+                        pixel = new Rgba32(0, 0, 0, 0);
+                    }
+                }
+            }
+        });
     }
 
     internal readonly record struct AtlasImage(int Width, int Height, byte[] Pixels);

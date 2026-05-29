@@ -44,7 +44,7 @@ void main()
     if (isCloud)
     {
         vec3 cloudColor = texel.rgb * fragTint * 0.92;
-        outColor = vec4(cloudColor, texel.a * 0.82);
+        outColor = vec4(cloudColor, texel.a * 0.68);
         return;
     }
 
