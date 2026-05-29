@@ -41,20 +41,20 @@ internal sealed class BlockTextureAtlasBuilder
     {
         var entries = new List<AtlasEntry>
         {
-            new(BlockTextureAtlas.GrassTop, "grass_block_top.png"),
-            new(BlockTextureAtlas.GrassSide, "grass_block_side.png"),
-            new(BlockTextureAtlas.Dirt, "dirt.png"),
-            new(BlockTextureAtlas.Stone, "stone.png"),
-            new(BlockTextureAtlas.Sand, "sand.png"),
-            new(BlockTextureAtlas.Water, "water_still.png"),
-            new(BlockTextureAtlas.CorruptedGrass, "sculk.png"),
-            new(BlockTextureAtlas.ArcaneCrystal, "amethyst_block.png"),
-            new(BlockTextureAtlas.MagicOre, "diamond_ore.png")
+            new(BlockTextureAtlas.GrassTop, "block/grass_block_top.png"),
+            new(BlockTextureAtlas.GrassSide, "block/grass_block_side.png"),
+            new(BlockTextureAtlas.Dirt, "block/dirt.png"),
+            new(BlockTextureAtlas.Stone, "block/stone.png"),
+            new(BlockTextureAtlas.Sand, "block/sand.png"),
+            new(BlockTextureAtlas.Water, "block/water_still.png"),
+            new(BlockTextureAtlas.CorruptedGrass, "block/sculk.png"),
+            new(BlockTextureAtlas.ArcaneCrystal, "block/amethyst_block.png"),
+            new(BlockTextureAtlas.MagicOre, "block/diamond_ore.png")
         };
 
         for (var i = 0; i < 10; i++)
         {
-            entries.Add(new AtlasEntry(BlockTextureAtlas.DestroyStage(i), $"destroy_stage_{i}.png"));
+            entries.Add(new AtlasEntry(BlockTextureAtlas.DestroyStage(i), $"block/destroy_stage_{i}.png"));
         }
 
         return entries;

@@ -52,6 +52,10 @@ public unsafe sealed class VulkanRenderer : IDisposable
     private DeviceMemory _blockAtlasMemory;
     private ImageView _blockAtlasImageView;
     private Sampler _blockAtlasSampler;
+    private Image _environmentAtlasImage;
+    private DeviceMemory _environmentAtlasMemory;
+    private ImageView _environmentAtlasImageView;
+    private Sampler _environmentAtlasSampler;
     private Image _depthImage;
     private DeviceMemory _depthImageMemory;
     private ImageView _depthImageView;
@@ -84,6 +88,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         CreateSwapchainResources();
         CreateCameraUniformBuffer();
         CreateBlockAtlasResources();
+        CreateEnvironmentAtlasResources();
         CreateDescriptorPool();
         CreateDescriptorSet();
         CreateCommandBuffers();
@@ -323,12 +328,20 @@ public unsafe sealed class VulkanRenderer : IDisposable
             StageFlags = ShaderStageFlags.FragmentBit
         };
 
-        var bindings = stackalloc[] { cameraBinding, atlasBinding };
+        var environmentBinding = new DescriptorSetLayoutBinding
+        {
+            Binding = 2,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+
+        var bindings = stackalloc[] { cameraBinding, atlasBinding, environmentBinding };
 
         var layoutInfo = new DescriptorSetLayoutCreateInfo
         {
             SType = StructureType.DescriptorSetLayoutCreateInfo,
-            BindingCount = 2,
+            BindingCount = 3,
             PBindings = bindings
         };
 
@@ -719,7 +732,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
 
     private void CreateBlockAtlasResources()
     {
-        var atlasBuilder = new BlockTextureAtlasBuilder(Path.Combine(AppContext.BaseDirectory, "Assets", "textures", "block"));
+        var atlasBuilder = new BlockTextureAtlasBuilder(Path.Combine(AppContext.BaseDirectory, "Assets", "textures"));
         var atlas = atlasBuilder.Build();
         var imageSize = checked((ulong)atlas.Pixels.Length);
 
@@ -784,7 +797,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         poolSizes[1] = new DescriptorPoolSize
         {
             Type = DescriptorType.CombinedImageSampler,
-            DescriptorCount = 1
+            DescriptorCount = 2
         };
 
         var poolInfo = new DescriptorPoolCreateInfo
@@ -838,7 +851,14 @@ public unsafe sealed class VulkanRenderer : IDisposable
             ImageLayout = ImageLayout.ShaderReadOnlyOptimal
         };
 
-        var descriptorWrites = stackalloc WriteDescriptorSet[2];
+        var environmentImageInfo = new DescriptorImageInfo
+        {
+            Sampler = _environmentAtlasSampler,
+            ImageView = _environmentAtlasImageView,
+            ImageLayout = ImageLayout.ShaderReadOnlyOptimal
+        };
+
+        var descriptorWrites = stackalloc WriteDescriptorSet[3];
         descriptorWrites[0] = descriptorWrite;
         descriptorWrites[1] = new WriteDescriptorSet
         {
@@ -850,8 +870,74 @@ public unsafe sealed class VulkanRenderer : IDisposable
             DescriptorCount = 1,
             PImageInfo = &imageInfo
         };
+        descriptorWrites[2] = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = _descriptorSet,
+            DstBinding = 2,
+            DstArrayElement = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            PImageInfo = &environmentImageInfo
+        };
 
-        _vk.UpdateDescriptorSets(_device, 2, descriptorWrites, 0, null);
+        _vk.UpdateDescriptorSets(_device, 3, descriptorWrites, 0, null);
+    }
+
+    private void CreateEnvironmentAtlasResources()
+    {
+        var atlasBuilder = new EnvironmentTextureAtlasBuilder(Path.Combine(AppContext.BaseDirectory, "Assets", "textures"));
+        var atlas = atlasBuilder.Build();
+        var imageSize = checked((ulong)atlas.Pixels.Length);
+
+        CreateBuffer(
+            imageSize,
+            BufferUsageFlags.TransferSrcBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out var stagingBuffer,
+            out var stagingMemory);
+
+        UploadBufferData(stagingMemory, atlas.Pixels);
+
+        CreateImage(
+            (uint)atlas.Width,
+            (uint)atlas.Height,
+            Format.R8G8B8A8Srgb,
+            ImageTiling.Optimal,
+            ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit,
+            MemoryPropertyFlags.DeviceLocalBit,
+            out _environmentAtlasImage,
+            out _environmentAtlasMemory);
+
+        TransitionImageLayout(_environmentAtlasImage, Format.R8G8B8A8Srgb, ImageLayout.Undefined, ImageLayout.TransferDstOptimal);
+        CopyBufferToImage(stagingBuffer, _environmentAtlasImage, (uint)atlas.Width, (uint)atlas.Height);
+        TransitionImageLayout(_environmentAtlasImage, Format.R8G8B8A8Srgb, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+
+        _vk.DestroyBuffer(_device, stagingBuffer, null);
+        _vk.FreeMemory(_device, stagingMemory, null);
+
+        _environmentAtlasImageView = CreateImageView(_environmentAtlasImage, Format.R8G8B8A8Srgb, ImageAspectFlags.ColorBit);
+
+        var samplerInfo = new SamplerCreateInfo
+        {
+            SType = StructureType.SamplerCreateInfo,
+            MagFilter = Filter.Nearest,
+            MinFilter = Filter.Nearest,
+            AddressModeU = SamplerAddressMode.ClampToEdge,
+            AddressModeV = SamplerAddressMode.ClampToEdge,
+            AddressModeW = SamplerAddressMode.ClampToEdge,
+            AnisotropyEnable = false,
+            MaxAnisotropy = 1f,
+            BorderColor = BorderColor.IntOpaqueBlack,
+            UnnormalizedCoordinates = false,
+            CompareEnable = false,
+            CompareOp = CompareOp.Always,
+            MipmapMode = SamplerMipmapMode.Nearest,
+            MinLod = 0f,
+            MaxLod = 0f
+        };
+
+        ThrowIfFailed(_vk.CreateSampler(_device, &samplerInfo, null, out _environmentAtlasSampler), "create environment atlas sampler");
     }
 
     private void CreateCommandBuffers()
@@ -1021,7 +1107,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         var clearValues = stackalloc ClearValue[2];
         clearValues[0] = new ClearValue
         {
-            Color = new ClearColorValue(0.025f, 0.018f, 0.035f, 1.0f)
+            Color = new ClearColorValue(_settings.SkyClearColor.X, _settings.SkyClearColor.Y, _settings.SkyClearColor.Z, 1.0f)
         };
         clearValues[1] = new ClearValue
         {
@@ -1588,6 +1674,26 @@ public unsafe sealed class VulkanRenderer : IDisposable
         if (_blockAtlasSampler.Handle != 0)
         {
             _vk.DestroySampler(_device, _blockAtlasSampler, null);
+        }
+
+        if (_environmentAtlasSampler.Handle != 0)
+        {
+            _vk.DestroySampler(_device, _environmentAtlasSampler, null);
+        }
+
+        if (_environmentAtlasImageView.Handle != 0)
+        {
+            _vk.DestroyImageView(_device, _environmentAtlasImageView, null);
+        }
+
+        if (_environmentAtlasImage.Handle != 0)
+        {
+            _vk.DestroyImage(_device, _environmentAtlasImage, null);
+        }
+
+        if (_environmentAtlasMemory.Handle != 0)
+        {
+            _vk.FreeMemory(_device, _environmentAtlasMemory, null);
         }
 
         if (_blockAtlasImageView.Handle != 0)

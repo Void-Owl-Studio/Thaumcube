@@ -103,6 +103,12 @@ public sealed class GameApplication : IDisposable
             ResetBreaking();
         }
 
+        var scrollSteps = -(int)MathF.Sign(_input.ScrollDeltaY);
+        if (_hotbar.CycleSelection(scrollSteps))
+        {
+            ResetBreaking();
+        }
+
         _player.Update(dt, _input);
         _world.LoadAround(_player.Position);
 
@@ -115,6 +121,12 @@ public sealed class GameApplication : IDisposable
 
     private void UpdateMainMenu()
     {
+        var hoveredMenuItem = HudLayout.HitTestMainMenu(_input.MousePosition, _window.Size.X, _window.Size.Y, _selectedRenderDistance);
+        if (hoveredMenuItem.HasValue)
+        {
+            _menuSelectedIndex = hoveredMenuItem.Value;
+        }
+
         if (_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
         {
             _menuSelectedIndex = (_menuSelectedIndex + 2) % 3;
@@ -150,6 +162,11 @@ public sealed class GameApplication : IDisposable
             }
         }
 
+        if (_input.LeftPressedThisFrame && hoveredMenuItem.HasValue)
+        {
+            HandleMainMenuClick(hoveredMenuItem.Value, _input.MousePosition.X);
+        }
+
         if (_input.ExitRequested)
         {
             _window.Close();
@@ -171,6 +188,39 @@ public sealed class GameApplication : IDisposable
         _mode = GameMode.Playing;
         _input.SetCursorCaptured(true);
         ResetBreaking();
+    }
+
+    private void HandleMainMenuClick(int menuIndex, float mouseX)
+    {
+        _menuSelectedIndex = menuIndex;
+
+        if (menuIndex == 0)
+        {
+            StartGame(_selectedRenderDistance);
+            return;
+        }
+
+        if (menuIndex == 1)
+        {
+            var layout = HudLayout.BuildMainMenu(_window.Size.X, _window.Size.Y, _selectedRenderDistance);
+            var bounds = layout.Items[menuIndex].Bounds;
+            var midX = bounds.X + bounds.Width / 2f;
+            if (mouseX < midX)
+            {
+                _selectedRenderDistance = Math.Max(_settings.MinRenderDistanceChunks, _selectedRenderDistance - 1);
+            }
+            else
+            {
+                _selectedRenderDistance = Math.Min(_settings.MaxRenderDistanceChunks, _selectedRenderDistance + 1);
+            }
+
+            return;
+        }
+
+        if (menuIndex == 2)
+        {
+            _window.Close();
+        }
     }
 
     private void HandleBlockInteraction(float dt)
@@ -255,6 +305,11 @@ public sealed class GameApplication : IDisposable
         {
             var stage = Math.Clamp((int)MathF.Floor(_hud.BreakProgress * 10f), 0, 9);
             meshes.Add(ChunkMeshBuilder.BuildBreakOverlayMesh(breakTarget.BlockPosition, breakTarget.FaceNormal, stage));
+        }
+
+        if (_player is not null)
+        {
+            meshes.AddRange(SkyMeshBuilder.Build(_player.Camera, _settings));
         }
 
         return meshes;

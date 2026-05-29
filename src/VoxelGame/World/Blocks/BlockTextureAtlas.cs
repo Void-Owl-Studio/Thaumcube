@@ -15,7 +15,6 @@ public static class BlockTextureAtlas
     public const int ArcaneCrystal = 7;
     public const int MagicOre = 8;
     public const int DestroyStageStart = 9;
-
     public const int TextureCount = 19;
 
     public static int DestroyStage(int stage) => DestroyStageStart + Math.Clamp(stage, 0, 9);

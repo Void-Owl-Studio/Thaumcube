@@ -62,24 +62,19 @@ internal unsafe sealed class VulkanImmediatePreview
         var title = "VOXELGAME";
         DrawText(commandBuffer, extent, title, (width - TextWidth(title, scale)) / 2, height / 5, scale, new Rgba(0.62f, 0.96f, 0.82f, 1f));
 
-        var options = new[]
-        {
-            "START",
-            $"RENDER DISTANCE {scene.Hud.MainMenuRenderDistance}",
-            "EXIT"
-        };
-
-        var menuScale = Math.Clamp(width / 430, 2, 4);
-        var y = height / 2 - 58;
+        var options = HudLayout.BuildMainMenuOptions(scene.Hud.MainMenuRenderDistance);
+        var layout = HudLayout.BuildMainMenu(width, height, scene.Hud.MainMenuRenderDistance);
+        var menuScale = layout.Scale;
 
         for (var i = 0; i < options.Length; i++)
         {
             var selected = i == scene.Hud.MainMenuSelectedIndex;
             var text = options[i];
             var textWidth = TextWidth(text, menuScale);
-            var boxWidth = Math.Max(textWidth + 56, width / 3);
-            var boxX = (width - boxWidth) / 2;
-            var boxY = y + i * 58;
+            var bounds = layout.Items[i].Bounds;
+            var boxWidth = bounds.Width;
+            var boxX = bounds.X;
+            var boxY = bounds.Y;
             var frame = selected ? new Rgba(0.56f, 0.95f, 0.78f, 1f) : new Rgba(0.16f, 0.13f, 0.18f, 1f);
             DrawRect(commandBuffer, extent, boxX - 3, boxY - 3, boxWidth + 6, 38, frame);
             DrawRect(commandBuffer, extent, boxX, boxY, boxWidth, 32, new Rgba(0.035f, 0.030f, 0.040f, 1f));
@@ -219,15 +214,14 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawHotbar(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        var slot = Math.Clamp(width / 28, 34, 54);
-        var gap = Math.Max(3, slot / 10);
-        var total = slot * Hotbar.SlotCount + gap * (Hotbar.SlotCount - 1);
-        var startX = (width - total) / 2;
-        var y = height - slot - Math.Max(16, height / 35);
+        var layout = HudLayout.BuildHotbar(width, height);
+        var slot = layout.SlotSize;
+        var y = layout.Y;
 
         for (var i = 0; i < Hotbar.SlotCount; i++)
         {
-            var x = startX + i * (slot + gap);
+            var bounds = layout.GetSlotRect(i);
+            var x = bounds.X;
             var selected = i == scene.Hud.SelectedSlot;
             var frame = selected ? new Rgba(0.55f, 0.95f, 0.82f, 1f) : new Rgba(0.12f, 0.10f, 0.13f, 1f);
             DrawRect(commandBuffer, extent, x - 2, y - 2, slot + 4, slot + 4, frame);

@@ -39,6 +39,40 @@ public sealed class Hotbar
         return SelectedIndex != previousIndex;
     }
 
+    public bool SelectSlot(int index)
+    {
+        var clamped = Math.Clamp(index, 0, SlotCount - 1);
+        if (clamped == SelectedIndex)
+        {
+            return false;
+        }
+
+        SelectedIndex = clamped;
+        return true;
+    }
+
+    public bool CycleSelection(int delta)
+    {
+        if (delta == 0)
+        {
+            return false;
+        }
+
+        var next = (SelectedIndex + delta) % SlotCount;
+        if (next < 0)
+        {
+            next += SlotCount;
+        }
+
+        if (next == SelectedIndex)
+        {
+            return false;
+        }
+
+        SelectedIndex = next;
+        return true;
+    }
+
     public bool TryAdd(BlockType block)
     {
         if (block == BlockType.Air)

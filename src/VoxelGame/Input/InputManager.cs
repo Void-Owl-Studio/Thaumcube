@@ -38,14 +38,19 @@ public sealed class InputManager : IDisposable
     private bool _lastRight;
     private Vector2 _lastMousePosition;
     private bool _hasMousePosition;
+    private float _scrollDeltaY;
     private HashSet<Key> _pressedKeys = new();
     private HashSet<Key> _previousPressedKeys = new();
 
     public bool ExitRequested { get; private set; }
     public bool BreakPressedThisFrame { get; private set; }
     public bool BreakHeld { get; private set; }
+    public bool LeftPressedThisFrame { get; private set; }
+    public bool RightPressedThisFrame { get; private set; }
     public bool PlacePressedThisFrame { get; private set; }
+    public Vector2 MousePosition { get; private set; }
     public Vector2 MouseDelta { get; private set; }
+    public float ScrollDeltaY { get; private set; }
 
     public void Attach(IWindow window)
     {
@@ -56,6 +61,7 @@ public sealed class InputManager : IDisposable
         if (_mouse is not null)
         {
             _mouse.Cursor.CursorMode = CursorMode.Raw;
+            _mouse.Scroll += OnMouseScroll;
         }
     }
 
@@ -64,7 +70,11 @@ public sealed class InputManager : IDisposable
         BreakPressedThisFrame = false;
         PlacePressedThisFrame = false;
         BreakHeld = false;
+        LeftPressedThisFrame = false;
+        RightPressedThisFrame = false;
         MouseDelta = default;
+        ScrollDeltaY = _scrollDeltaY;
+        _scrollDeltaY = 0f;
 
         (_previousPressedKeys, _pressedKeys) = (_pressedKeys, _previousPressedKeys);
         _pressedKeys.Clear();
@@ -88,6 +98,7 @@ public sealed class InputManager : IDisposable
         }
 
         var position = _mouse.Position;
+        MousePosition = position;
         if (_hasMousePosition)
         {
             MouseDelta = position - _lastMousePosition;
@@ -101,7 +112,9 @@ public sealed class InputManager : IDisposable
 
         BreakHeld = left;
         BreakPressedThisFrame = left && !_lastLeft;
+        LeftPressedThisFrame = BreakPressedThisFrame;
         PlacePressedThisFrame = right && !_lastRight;
+        RightPressedThisFrame = PlacePressedThisFrame;
 
         _lastLeft = left;
         _lastRight = right;
@@ -155,6 +168,16 @@ public sealed class InputManager : IDisposable
 
     public void Dispose()
     {
+        if (_mouse is not null)
+        {
+            _mouse.Scroll -= OnMouseScroll;
+        }
+
         _context?.Dispose();
+    }
+
+    private void OnMouseScroll(IMouse mouse, ScrollWheel scrollWheel)
+    {
+        _scrollDeltaY += scrollWheel.Y;
     }
 }
