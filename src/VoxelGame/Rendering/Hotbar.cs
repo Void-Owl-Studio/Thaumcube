@@ -6,22 +6,29 @@ namespace VoxelGame.Rendering;
 public sealed class Hotbar
 {
     public const int SlotCount = 9;
+    public const int InventorySlotCount = 27;
     public const int MaxStackSize = 64;
 
-    private readonly HotbarSlot[] _slots;
+    private readonly HotbarSlot[] _hotbarSlots;
+    private readonly HotbarSlot[] _inventorySlots;
 
     public int SelectedIndex { get; private set; }
-    public IReadOnlyList<HotbarSlot> Slots => _slots;
-    public BlockType SelectedBlock => _slots[SelectedIndex].Block;
+    public IReadOnlyList<HotbarSlot> Slots => _hotbarSlots;
+    public IReadOnlyList<HotbarSlot> InventorySlots => _inventorySlots;
+    public HotbarSlot CursorSlot { get; private set; }
+    public BlockType SelectedBlock => _hotbarSlots[SelectedIndex].Block;
 
-    private Hotbar(HotbarSlot[] slots)
+    private Hotbar(HotbarSlot[] hotbarSlots, HotbarSlot[] inventorySlots)
     {
-        _slots = slots;
+        _hotbarSlots = hotbarSlots;
+        _inventorySlots = inventorySlots;
     }
 
     public static Hotbar CreateEmpty()
     {
-        return new Hotbar(Enumerable.Repeat(HotbarSlot.Empty, SlotCount).ToArray());
+        return new Hotbar(
+            Enumerable.Repeat(HotbarSlot.Empty, SlotCount).ToArray(),
+            Enumerable.Repeat(HotbarSlot.Empty, InventorySlotCount).ToArray());
     }
 
     public bool UpdateSelection(InputManager input)
@@ -80,22 +87,14 @@ public sealed class Hotbar
             return true;
         }
 
-        for (var i = 0; i < _slots.Length; i++)
+        if (TryStackInto(_hotbarSlots, block) || TryStackInto(_inventorySlots, block))
         {
-            if (_slots[i].Block == block && _slots[i].Count < MaxStackSize)
-            {
-                _slots[i] = _slots[i] with { Count = _slots[i].Count + 1 };
-                return true;
-            }
+            return true;
         }
 
-        for (var i = 0; i < _slots.Length; i++)
+        if (TryPlaceIntoEmpty(_hotbarSlots, block) || TryPlaceIntoEmpty(_inventorySlots, block))
         {
-            if (_slots[i].IsEmpty)
-            {
-                _slots[i] = new HotbarSlot(block, 1);
-                return true;
-            }
+            return true;
         }
 
         return false;
@@ -103,21 +102,111 @@ public sealed class Hotbar
 
     public void Clear()
     {
-        Array.Fill(_slots, HotbarSlot.Empty);
+        Array.Fill(_hotbarSlots, HotbarSlot.Empty);
+        Array.Fill(_inventorySlots, HotbarSlot.Empty);
+        CursorSlot = HotbarSlot.Empty;
         SelectedIndex = 0;
     }
 
     public bool TryConsumeSelected()
     {
-        var slot = _slots[SelectedIndex];
+        var slot = _hotbarSlots[SelectedIndex];
         if (slot.IsEmpty)
         {
             return false;
         }
 
         var nextCount = slot.Count - 1;
-        _slots[SelectedIndex] = nextCount <= 0 ? HotbarSlot.Empty : slot with { Count = nextCount };
+        _hotbarSlots[SelectedIndex] = nextCount <= 0 ? HotbarSlot.Empty : slot with { Count = nextCount };
         return true;
+    }
+
+    public bool InteractWithHotbarSlot(int index)
+    {
+        if (index < 0 || index >= _hotbarSlots.Length)
+        {
+            return false;
+        }
+
+        SelectSlot(index);
+        return InteractWithSlot(_hotbarSlots, index);
+    }
+
+    public bool InteractWithInventorySlot(int index)
+    {
+        if (index < 0 || index >= _inventorySlots.Length)
+        {
+            return false;
+        }
+
+        return InteractWithSlot(_inventorySlots, index);
+    }
+
+    private bool InteractWithSlot(HotbarSlot[] slots, int index)
+    {
+        var slot = slots[index];
+        if (CursorSlot.IsEmpty)
+        {
+            if (slot.IsEmpty)
+            {
+                return false;
+            }
+
+            CursorSlot = slot;
+            slots[index] = HotbarSlot.Empty;
+            return true;
+        }
+
+        if (slot.IsEmpty)
+        {
+            slots[index] = CursorSlot;
+            CursorSlot = HotbarSlot.Empty;
+            return true;
+        }
+
+        if (slot.Block == CursorSlot.Block && slot.Count < MaxStackSize)
+        {
+            var transfer = Math.Min(CursorSlot.Count, MaxStackSize - slot.Count);
+            slots[index] = slot with { Count = slot.Count + transfer };
+            CursorSlot = CursorSlot with { Count = CursorSlot.Count - transfer };
+            if (CursorSlot.Count <= 0)
+            {
+                CursorSlot = HotbarSlot.Empty;
+            }
+
+            return true;
+        }
+
+        (slots[index], CursorSlot) = (CursorSlot, slot);
+        return true;
+    }
+
+    private static bool TryStackInto(HotbarSlot[] slots, BlockType block)
+    {
+        for (var i = 0; i < slots.Length; i++)
+        {
+            if (slots[i].Block == block && slots[i].Count < MaxStackSize)
+            {
+                slots[i] = slots[i] with { Count = slots[i].Count + 1 };
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryPlaceIntoEmpty(HotbarSlot[] slots, BlockType block)
+    {
+        for (var i = 0; i < slots.Length; i++)
+        {
+            if (slots[i].IsEmpty)
+            {
+                slots[i] = new HotbarSlot(block, 1);
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

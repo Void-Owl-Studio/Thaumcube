@@ -38,7 +38,7 @@ public sealed class WorldGenerator
             caveGenerator);
     }
 
-    public void Generate(Chunk chunk)
+    public void Generate(ChunkData chunk)
     {
         chunk.Aura = BuildAura(chunk.Coord);
         _chunkGenerator.Generate(chunk);

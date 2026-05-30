@@ -3,9 +3,17 @@ using Silk.NET.Input;
 using VoxelGame.Input;
 using VoxelGame.Physics;
 using VoxelGame.World;
+using VoxelGame.World.Chunks;
 using VoxelGame.World.Storage;
 
 namespace VoxelGame.Player;
+
+public enum CameraViewMode
+{
+    FirstPerson,
+    ThirdPersonBack,
+    ThirdPersonFront
+}
 
 public sealed class FirstPersonPlayer
 {
@@ -21,11 +29,15 @@ public sealed class FirstPersonPlayer
     private const float WalkBobPitchDegrees = 1.05f;
     private const float WalkBobFrequency = 1.7f;
     private const float WalkBobSmoothing = 0.12f;
+    private const float ThirdPersonDistance = 4.4f;
+    private const float ThirdPersonCollisionPadding = 0.24f;
 
     private readonly VoxelWorld _world;
     private readonly float _mouseSensitivity;
+    private readonly PlayerModel _model;
     private Vector3 _velocity;
     private bool _grounded;
+    private bool _breakingBlock;
     private float _walkBobPhase;
     private float _walkBob;
 
@@ -62,10 +74,11 @@ public sealed class FirstPersonPlayer
         }
     }
 
-    public FirstPersonPlayer(VoxelWorld world, float mouseSensitivity)
+    public FirstPersonPlayer(VoxelWorld world, float mouseSensitivity, PlayerBodyType bodyType = PlayerBodyType.Normal)
     {
         _world = world;
         _mouseSensitivity = mouseSensitivity;
+        _model = new PlayerModel(bodyType);
     }
 
     public void SpawnAt(Vector3 position)
@@ -75,6 +88,8 @@ public sealed class FirstPersonPlayer
         _grounded = false;
         _walkBobPhase = 0f;
         _walkBob = 0f;
+        _model.Reset(YawDegrees);
+        _breakingBlock = false;
     }
 
     public void SpawnAt(Vector3 position, float yawDegrees, float pitchDegrees)
@@ -86,6 +101,8 @@ public sealed class FirstPersonPlayer
         _grounded = false;
         _walkBobPhase = 0f;
         _walkBob = 0f;
+        _model.Reset(YawDegrees);
+        _breakingBlock = false;
     }
 
     public PlayerSaveData CreateSaveData()
@@ -93,10 +110,13 @@ public sealed class FirstPersonPlayer
         return PlayerSaveData.FromState(Position, YawDegrees, PitchDegrees);
     }
 
-    public void Update(float dt, InputManager input)
+    public void Update(float dt, InputManager input, bool allowLook = true)
     {
-        YawDegrees -= input.MouseDelta.X * _mouseSensitivity;
-        PitchDegrees = Math.Clamp(PitchDegrees - input.MouseDelta.Y * _mouseSensitivity, -89f, 89f);
+        if (allowLook)
+        {
+            YawDegrees -= input.MouseDelta.X * _mouseSensitivity;
+            PitchDegrees = Math.Clamp(PitchDegrees - input.MouseDelta.Y * _mouseSensitivity, -89f, 89f);
+        }
 
         var wasGrounded = _grounded;
         var jumpRequested = wasGrounded && input.IsKeyPressed(Key.Space);
@@ -123,9 +143,83 @@ public sealed class FirstPersonPlayer
         _velocity = result.Velocity;
         _grounded = result.Grounded;
         UpdateCameraBobbing(dt, move, result.Grounded);
+        _model.Update(dt, new Vector3(_velocity.X, 0f, _velocity.Z), _velocity.Y, result.Grounded, YawDegrees, _breakingBlock);
     }
 
     public Ray3 CreateLookRay() => new(Camera.Position, Camera.Forward);
+
+    public Ray3 CreateLookRay(CameraState camera) => new(camera.Position, camera.Forward);
+
+    public CameraState GetCamera(CameraViewMode cameraMode)
+    {
+        var firstPersonCamera = Camera;
+        if (cameraMode == CameraViewMode.FirstPerson)
+        {
+            return firstPersonCamera;
+        }
+
+        var focus = Position + new Vector3(0f, EyeHeight * 0.92f, 0f);
+        if (cameraMode == CameraViewMode.ThirdPersonBack)
+        {
+            var backward = -firstPersonCamera.Forward;
+            var distance = ResolveThirdPersonDistance(focus, backward, ThirdPersonDistance);
+            var cameraPosition = focus + backward * distance;
+            return new CameraState(cameraPosition, YawDegrees, PitchDegrees);
+        }
+
+        var forward = firstPersonCamera.Forward;
+        var frontDistance = ResolveThirdPersonDistance(focus, forward, ThirdPersonDistance);
+        var frontPosition = focus + forward * frontDistance;
+        return new CameraState(frontPosition, NormalizeAngle(YawDegrees + 180f), -PitchDegrees);
+    }
+
+    public IEnumerable<ChunkRenderMesh> BuildRenderMeshes(bool hideHeadForFirstPerson = true)
+    {
+        return _model.BuildRenderMeshes(Position, YawDegrees, PitchDegrees, hideHeadForFirstPerson);
+    }
+
+    public void SetBodyType(PlayerBodyType bodyType)
+    {
+        _model.BodyType = bodyType;
+    }
+
+    public void SetBreakingBlock(bool breakingBlock)
+    {
+        _breakingBlock = breakingBlock;
+    }
+
+    private float ResolveThirdPersonDistance(Vector3 focus, Vector3 backward, float desiredDistance)
+    {
+        var direction = Vector3.Normalize(backward);
+        const float step = 0.1f;
+
+        for (var distance = step; distance <= desiredDistance; distance += step)
+        {
+            var sample = focus + direction * distance;
+            var block = _world.GetBlock(
+                (int)MathF.Floor(sample.X),
+                (int)MathF.Floor(sample.Y),
+                (int)MathF.Floor(sample.Z));
+
+            if (_world.Blocks.IsSolid(block))
+            {
+                return MathF.Max(0.65f, distance - ThirdPersonCollisionPadding);
+            }
+        }
+
+        return desiredDistance;
+    }
+
+    private static float NormalizeAngle(float degrees)
+    {
+        degrees %= 360f;
+        if (degrees < 0f)
+        {
+            degrees += 360f;
+        }
+
+        return degrees;
+    }
 
     private Vector3 BuildMoveVector(InputManager input)
     {

@@ -1,6 +1,7 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using VoxelGame.Player;
 using VoxelGame.World.Blocks;
 
 namespace VoxelGame.Rendering.Vulkan;
@@ -23,7 +24,9 @@ internal sealed class BlockTextureAtlasBuilder
 
         foreach (var entry in GetEntries())
         {
-            using var source = Image.Load<Rgba32>(Path.Combine(_rootDirectory, entry.FileName));
+            using var source = string.IsNullOrEmpty(entry.FileName)
+                ? new Image<Rgba32>(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize, Color.White)
+                : Image.Load<Rgba32>(Path.Combine(_rootDirectory, entry.FileName));
             source.Mutate(context => context.Resize(new ResizeOptions
             {
                 Size = new Size(BlockTextureAtlas.TileSize, BlockTextureAtlas.TileSize),
@@ -33,6 +36,11 @@ internal sealed class BlockTextureAtlasBuilder
             var tileX = (entry.Index % BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.PaddedTileSize;
             var tileY = (entry.Index / BlockTextureAtlas.TilesPerRow) * BlockTextureAtlas.PaddedTileSize;
             CopyTileWithPadding(atlas, source, tileX, tileY);
+        }
+
+        using (var playerSkin = LoadPlayerSkin())
+        {
+            CopyImage(atlas, playerSkin, 0, BlockTextureAtlas.GetBlockAtlasHeight());
         }
 
         var pixels = new byte[atlasWidth * atlasHeight * 4];
@@ -64,6 +72,8 @@ internal sealed class BlockTextureAtlasBuilder
         {
             entries.Add(new AtlasEntry(BlockTextureAtlas.DestroyStage(i), $"block/destroy_stage_{i}.png"));
         }
+
+        entries.Add(new AtlasEntry(BlockTextureAtlas.PlayerWhite, string.Empty));
 
         return entries;
     }
@@ -99,6 +109,45 @@ internal sealed class BlockTextureAtlasBuilder
             {
                 atlas[tileX + x, tileY + pad] = atlas[tileX + x, tileY + padding];
                 atlas[tileX + x, tileY + padding + tileSize + pad] = atlas[tileX + x, tileY + padding + tileSize - 1];
+            }
+        }
+    }
+
+    private Image<Rgba32> LoadPlayerSkin()
+    {
+        var appliedSkin = PlayerSkinStore.LoadAppliedSkin();
+        if (appliedSkin is not null)
+        {
+            return appliedSkin;
+        }
+
+        var modelPath = Path.Combine(AppContext.BaseDirectory, "Assets", "models", "playermodel.gltf");
+        if (!File.Exists(modelPath))
+        {
+            modelPath = Path.Combine(AppContext.BaseDirectory, "assets", "models", "playermodel.gltf");
+        }
+
+        var file = File.ReadAllText(modelPath);
+        var marker = "\"uri\":\"data:image/png;base64,";
+        var markerIndex = file.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            throw new InvalidOperationException("Player skin image was not found in playermodel.gltf.");
+        }
+
+        var startIndex = markerIndex + marker.Length;
+        var endIndex = file.IndexOf('"', startIndex);
+        var base64 = file[startIndex..endIndex];
+        return Image.Load<Rgba32>(Convert.FromBase64String(base64));
+    }
+
+    private static void CopyImage(Image<Rgba32> atlas, Image<Rgba32> source, int offsetX, int offsetY)
+    {
+        for (var y = 0; y < source.Height; y++)
+        {
+            for (var x = 0; x < source.Width; x++)
+            {
+                atlas[offsetX + x, offsetY + y] = source[x, y];
             }
         }
     }

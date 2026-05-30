@@ -8,6 +8,8 @@ using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
 using VoxelGame.Core;
 using VoxelGame.Player;
+using VoxelGame.Rendering.Sprites;
+using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 using Buffer = Silk.NET.Vulkan.Buffer;
 using VkSemaphore = Silk.NET.Vulkan.Semaphore;
@@ -50,6 +52,13 @@ public unsafe sealed class VulkanRenderer : IDisposable
     private DescriptorSet _descriptorSet;
     private Buffer _cameraUniformBuffer;
     private DeviceMemory _cameraUniformMemory;
+    private Buffer _spriteVertexBuffer;
+    private DeviceMemory _spriteVertexMemory;
+    private Buffer _spriteIndexBuffer;
+    private DeviceMemory _spriteIndexMemory;
+    private int _spriteVertexCapacity;
+    private int _spriteIndexCapacity;
+    private uint _spriteIndexCount;
     private Image _blockAtlasImage;
     private DeviceMemory _blockAtlasMemory;
     private ImageView _blockAtlasImageView;
@@ -58,6 +67,16 @@ public unsafe sealed class VulkanRenderer : IDisposable
     private DeviceMemory _environmentAtlasMemory;
     private ImageView _environmentAtlasImageView;
     private Sampler _environmentAtlasSampler;
+    private Image _menuAtlasImage;
+    private DeviceMemory _menuAtlasMemory;
+    private ImageView _menuAtlasImageView;
+    private Sampler _menuAtlasSampler;
+    private Vector2 _menuBackgroundUvMin;
+    private Vector2 _menuBackgroundUvMax;
+    private Vector2 _menuLogoUvMin;
+    private Vector2 _menuLogoUvMax;
+    private float _menuBackgroundAspect = 1f;
+    private float _menuLogoAspect = 1f;
     private Image _depthImage;
     private DeviceMemory _depthImageMemory;
     private ImageView _depthImageView;
@@ -65,6 +84,8 @@ public unsafe sealed class VulkanRenderer : IDisposable
     private readonly VkSemaphore[] _renderFinished = new VkSemaphore[MaxFramesInFlight];
     private readonly Fence[] _inFlight = new Fence[MaxFramesInFlight];
     private VulkanImmediatePreview _hudPreview = null!;
+    private const uint MenuBackgroundBlockId = 210;
+    private const uint MenuLogoBlockId = 211;
     private bool _initialized;
     private bool _framebufferResized;
     private double _titleRefresh;
@@ -91,6 +112,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         CreateCameraUniformBuffer();
         CreateBlockAtlasResources();
         CreateEnvironmentAtlasResources();
+        CreateMenuAtlasResources();
         CreateDescriptorPool();
         CreateDescriptorSet();
         CreateCommandBuffers();
@@ -104,6 +126,20 @@ public unsafe sealed class VulkanRenderer : IDisposable
         _framebufferResized = width > 0 && height > 0;
     }
 
+    public void ReloadBlockAtlas()
+    {
+        if (!_initialized)
+        {
+            return;
+        }
+
+        _vk.DeviceWaitIdle(_device);
+        DestroyBlockAtlasResources();
+        CreateBlockAtlasResources();
+        UpdateDescriptorSet();
+        _hudPreview.ReloadPlayerSkin();
+    }
+
     public void Render(Rendering.RenderScene scene)
     {
         if (!_initialized || _window is null || _window.Size.X <= 0 || _window.Size.Y <= 0)
@@ -115,6 +151,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         _vk.WaitForFences(_device, 1, in _inFlight[0], true, ulong.MaxValue);
         SyncChunkMeshes(scene.ChunkMeshes);
         UpdateCameraUniform(scene);
+        UpdateSpriteBuffers(scene);
 
         uint imageIndex = 0;
         var acquire = _swapchainApi.AcquireNextImage(_device, _swapchain, ulong.MaxValue, _imageAvailable[0], default, ref imageIndex);
@@ -338,12 +375,20 @@ public unsafe sealed class VulkanRenderer : IDisposable
             StageFlags = ShaderStageFlags.FragmentBit
         };
 
-        var bindings = stackalloc[] { cameraBinding, atlasBinding, environmentBinding };
+        var menuBinding = new DescriptorSetLayoutBinding
+        {
+            Binding = 3,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+
+        var bindings = stackalloc[] { cameraBinding, atlasBinding, environmentBinding, menuBinding };
 
         var layoutInfo = new DescriptorSetLayoutCreateInfo
         {
             SType = StructureType.DescriptorSetLayoutCreateInfo,
-            BindingCount = 3,
+            BindingCount = 4,
             PBindings = bindings
         };
 
@@ -549,7 +594,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
                 InputRate = VertexInputRate.Vertex
             };
 
-            var attributeDescriptions = stackalloc VertexInputAttributeDescription[5];
+            var attributeDescriptions = stackalloc VertexInputAttributeDescription[6];
             attributeDescriptions[0] = new VertexInputAttributeDescription
             {
                 Binding = 0,
@@ -585,13 +630,20 @@ public unsafe sealed class VulkanRenderer : IDisposable
                 Format = Format.R32G32B32Sfloat,
                 Offset = (uint)Marshal.OffsetOf<VoxelVertex>(nameof(VoxelVertex.Tint))
             };
+            attributeDescriptions[5] = new VertexInputAttributeDescription
+            {
+                Binding = 0,
+                Location = 5,
+                Format = Format.R32Sfloat,
+                Offset = (uint)Marshal.OffsetOf<VoxelVertex>(nameof(VoxelVertex.Alpha))
+            };
 
             var vertexInput = new PipelineVertexInputStateCreateInfo
             {
                 SType = StructureType.PipelineVertexInputStateCreateInfo,
                 VertexBindingDescriptionCount = 1,
                 PVertexBindingDescriptions = &bindingDescription,
-                VertexAttributeDescriptionCount = 5,
+                VertexAttributeDescriptionCount = 6,
                 PVertexAttributeDescriptions = attributeDescriptions
             };
 
@@ -802,7 +854,7 @@ public unsafe sealed class VulkanRenderer : IDisposable
         poolSizes[1] = new DescriptorPoolSize
         {
             Type = DescriptorType.CombinedImageSampler,
-            DescriptorCount = 2
+            DescriptorCount = 3
         };
 
         var poolInfo = new DescriptorPoolCreateInfo
@@ -832,6 +884,11 @@ public unsafe sealed class VulkanRenderer : IDisposable
             ThrowIfFailed(_vk.AllocateDescriptorSets(_device, &allocInfo, descriptorSet), "allocate descriptor set");
         }
 
+        UpdateDescriptorSet();
+    }
+
+    private void UpdateDescriptorSet()
+    {
         var bufferInfo = new DescriptorBufferInfo
         {
             Buffer = _cameraUniformBuffer,
@@ -863,7 +920,14 @@ public unsafe sealed class VulkanRenderer : IDisposable
             ImageLayout = ImageLayout.ShaderReadOnlyOptimal
         };
 
-        var descriptorWrites = stackalloc WriteDescriptorSet[3];
+        var menuImageInfo = new DescriptorImageInfo
+        {
+            Sampler = _menuAtlasSampler,
+            ImageView = _menuAtlasImageView,
+            ImageLayout = ImageLayout.ShaderReadOnlyOptimal
+        };
+
+        var descriptorWrites = stackalloc WriteDescriptorSet[4];
         descriptorWrites[0] = descriptorWrite;
         descriptorWrites[1] = new WriteDescriptorSet
         {
@@ -885,8 +949,18 @@ public unsafe sealed class VulkanRenderer : IDisposable
             DescriptorCount = 1,
             PImageInfo = &environmentImageInfo
         };
+        descriptorWrites[3] = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = _descriptorSet,
+            DstBinding = 3,
+            DstArrayElement = 0,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            DescriptorCount = 1,
+            PImageInfo = &menuImageInfo
+        };
 
-        _vk.UpdateDescriptorSets(_device, 3, descriptorWrites, 0, null);
+        _vk.UpdateDescriptorSets(_device, 4, descriptorWrites, 0, null);
     }
 
     private void CreateEnvironmentAtlasResources()
@@ -943,6 +1017,69 @@ public unsafe sealed class VulkanRenderer : IDisposable
         };
 
         ThrowIfFailed(_vk.CreateSampler(_device, &samplerInfo, null, out _environmentAtlasSampler), "create environment atlas sampler");
+    }
+
+    private void CreateMenuAtlasResources()
+    {
+        var atlasBuilder = new MenuTextureAtlasBuilder(Path.Combine(AppContext.BaseDirectory, "Assets"));
+        var atlas = atlasBuilder.Build();
+        _menuBackgroundAspect = atlas.BackgroundAspect;
+        _menuLogoAspect = atlas.LogoAspect;
+        _menuBackgroundUvMin = atlas.BackgroundUvMin;
+        _menuBackgroundUvMax = atlas.BackgroundUvMax;
+        _menuLogoUvMin = atlas.LogoUvMin;
+        _menuLogoUvMax = atlas.LogoUvMax;
+
+        var imageSize = checked((ulong)atlas.Pixels.Length);
+
+        CreateBuffer(
+            imageSize,
+            BufferUsageFlags.TransferSrcBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out var stagingBuffer,
+            out var stagingMemory);
+
+        UploadBufferData(stagingMemory, atlas.Pixels);
+
+        CreateImage(
+            (uint)atlas.Width,
+            (uint)atlas.Height,
+            Format.R8G8B8A8Srgb,
+            ImageTiling.Optimal,
+            ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit,
+            MemoryPropertyFlags.DeviceLocalBit,
+            out _menuAtlasImage,
+            out _menuAtlasMemory);
+
+        TransitionImageLayout(_menuAtlasImage, Format.R8G8B8A8Srgb, ImageLayout.Undefined, ImageLayout.TransferDstOptimal);
+        CopyBufferToImage(stagingBuffer, _menuAtlasImage, (uint)atlas.Width, (uint)atlas.Height);
+        TransitionImageLayout(_menuAtlasImage, Format.R8G8B8A8Srgb, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+
+        _vk.DestroyBuffer(_device, stagingBuffer, null);
+        _vk.FreeMemory(_device, stagingMemory, null);
+
+        _menuAtlasImageView = CreateImageView(_menuAtlasImage, Format.R8G8B8A8Srgb, ImageAspectFlags.ColorBit);
+
+        var samplerInfo = new SamplerCreateInfo
+        {
+            SType = StructureType.SamplerCreateInfo,
+            MagFilter = Filter.Linear,
+            MinFilter = Filter.Linear,
+            AddressModeU = SamplerAddressMode.ClampToEdge,
+            AddressModeV = SamplerAddressMode.ClampToEdge,
+            AddressModeW = SamplerAddressMode.ClampToEdge,
+            AnisotropyEnable = false,
+            MaxAnisotropy = 1f,
+            BorderColor = BorderColor.IntOpaqueBlack,
+            UnnormalizedCoordinates = false,
+            CompareEnable = false,
+            CompareOp = CompareOp.Always,
+            MipmapMode = SamplerMipmapMode.Linear,
+            MinLod = 0f,
+            MaxLod = 0f
+        };
+
+        ThrowIfFailed(_vk.CreateSampler(_device, &samplerInfo, null, out _menuAtlasSampler), "create menu atlas sampler");
     }
 
     private void CreateCommandBuffers()
@@ -1130,7 +1267,10 @@ public unsafe sealed class VulkanRenderer : IDisposable
             new Vector4(_settings.FogColor, 1f),
             new Vector4(_settings.SkyLightColor, _settings.SkyLightStrength),
             new Vector4(fogStartDistance, fullFogDistance, _settings.FogHeightFalloff, _settings.AmbientLightStrength),
-            new Vector4(_settings.SunLightDirection, _settings.DiffuseLightStrength));
+            new Vector4(_settings.SunLightDirection, _settings.DiffuseLightStrength),
+            new Vector4(_settings.CloudColor, _settings.CloudOpacity),
+            new Vector4(ResolveCloudMotion(_settings), _settings.CloudSpeed, 0f),
+            new Vector4(SkyMeshBuilder.GetCloudWorldOffset(camera.Position, _settings, scene.ElapsedSeconds), 0f, 0f));
 
         void* data = null;
         ThrowIfFailed(_vk.MapMemory(_device, _cameraUniformMemory, 0, (ulong)Marshal.SizeOf<CameraUniform>(), 0, &data), "map camera uniform memory");
@@ -1209,9 +1349,242 @@ public unsafe sealed class VulkanRenderer : IDisposable
             _vk.CmdDrawIndexed(commandBuffer, mesh.IndexCount, 1, 0, 0, 0);
         }
 
+        if (_spriteIndexCount > 0)
+        {
+            var spriteVertexBuffer = _spriteVertexBuffer;
+            var spriteVertexOffset = 0UL;
+            _vk.CmdBindVertexBuffers(commandBuffer, 0, 1, &spriteVertexBuffer, &spriteVertexOffset);
+            _vk.CmdBindIndexBuffer(commandBuffer, _spriteIndexBuffer, 0, IndexType.Uint32);
+            _vk.CmdDrawIndexed(commandBuffer, _spriteIndexCount, 1, 0, 0, 0);
+        }
+
         _hudPreview.DrawHud(commandBuffer, _swapchainExtent, scene);
         _vk.CmdEndRenderPass(commandBuffer);
         ThrowIfFailed(_vk.EndCommandBuffer(commandBuffer), "end command buffer");
+    }
+
+    private void UpdateSpriteBuffers(Rendering.RenderScene scene)
+    {
+        _spriteIndexCount = 0;
+        var camera = scene.Camera;
+        var quads = new List<SpriteQuad>(scene.Sprites.Count + 4);
+        foreach (var sprite in scene.Sprites)
+        {
+            quads.Add(new SpriteQuad(
+                sprite.Position,
+                sprite.Size,
+                sprite.Size,
+                (uint)sprite.Block,
+                sprite.TextureIndex,
+                sprite.UvMin,
+                sprite.UvMax,
+                sprite.Tint,
+                sprite.Alpha));
+        }
+
+        AppendMainMenuSprites(quads, scene);
+        if (quads.Count == 0)
+        {
+            return;
+        }
+
+        var sortedSprites = quads
+            .OrderByDescending(sprite => Vector3.DistanceSquared(sprite.Position, camera.Position))
+            .ToArray();
+
+        var vertexCount = sortedSprites.Length * 4;
+        var indexCount = sortedSprites.Length * 6;
+        EnsureSpriteBufferCapacity(vertexCount, indexCount);
+
+        var vertices = new VoxelVertex[vertexCount];
+        var indices = new uint[indexCount];
+        var cameraRight = Vector3.Normalize(Vector3.Cross(camera.Up, camera.Forward));
+        var cameraUp = Vector3.Normalize(Vector3.Cross(camera.Forward, cameraRight));
+        var faceNormal = Vector3.Normalize(Vector3.Cross(cameraRight, cameraUp));
+
+        for (var i = 0; i < sortedSprites.Length; i++)
+        {
+            var sprite = sortedSprites[i];
+            var halfRight = cameraRight * sprite.Width * 0.5f;
+            var halfUp = cameraUp * sprite.Height * 0.5f;
+            var textureIndex = sprite.TextureIndex;
+            var vertexStart = i * 4;
+            var indexStart = i * 6;
+
+            vertices[vertexStart + 0] = new VoxelVertex(
+                sprite.Position - halfRight - halfUp,
+                faceNormal,
+                ResolveSpriteUv(sprite, sprite.UvMin.X, sprite.UvMax.Y),
+                sprite.BlockId,
+                sprite.Tint,
+                sprite.Alpha);
+            vertices[vertexStart + 1] = new VoxelVertex(
+                sprite.Position - halfRight + halfUp,
+                faceNormal,
+                ResolveSpriteUv(sprite, sprite.UvMin.X, sprite.UvMin.Y),
+                sprite.BlockId,
+                sprite.Tint,
+                sprite.Alpha);
+            vertices[vertexStart + 2] = new VoxelVertex(
+                sprite.Position + halfRight + halfUp,
+                faceNormal,
+                ResolveSpriteUv(sprite, sprite.UvMax.X, sprite.UvMin.Y),
+                sprite.BlockId,
+                sprite.Tint,
+                sprite.Alpha);
+            vertices[vertexStart + 3] = new VoxelVertex(
+                sprite.Position + halfRight - halfUp,
+                faceNormal,
+                ResolveSpriteUv(sprite, sprite.UvMax.X, sprite.UvMax.Y),
+                sprite.BlockId,
+                sprite.Tint,
+                sprite.Alpha);
+
+            indices[indexStart + 0] = (uint)vertexStart;
+            indices[indexStart + 1] = (uint)vertexStart + 1u;
+            indices[indexStart + 2] = (uint)vertexStart + 2u;
+            indices[indexStart + 3] = (uint)vertexStart;
+            indices[indexStart + 4] = (uint)vertexStart + 2u;
+            indices[indexStart + 5] = (uint)vertexStart + 3u;
+        }
+
+        UploadBufferData(_spriteVertexMemory, vertices);
+        UploadBufferData(_spriteIndexMemory, indices);
+        _spriteIndexCount = (uint)indexCount;
+    }
+
+    private void AppendMainMenuSprites(List<SpriteQuad> quads, Rendering.RenderScene scene)
+    {
+        if (!scene.Hud.ShowMenu || scene.Hud.MenuScreen != Rendering.MenuScreen.Main || scene.Hud.ShowPauseOverlay)
+        {
+            return;
+        }
+
+        var camera = scene.Camera;
+        var forward = Vector3.Normalize(camera.Forward);
+        var right = Vector3.Normalize(Vector3.Cross(camera.Up, forward));
+        var up = Vector3.Normalize(Vector3.Cross(forward, right));
+        var aspect = Math.Max(1f, _swapchainExtent.Width / (float)Math.Max(1u, _swapchainExtent.Height));
+        var fovRadians = MathF.PI / 180f * _settings.CameraFieldOfViewDegrees;
+
+        var backgroundDepth = 2.8f;
+        var backgroundHeight = 2f * MathF.Tan(fovRadians * 0.5f) * backgroundDepth;
+        var backgroundWidth = backgroundHeight * aspect;
+        var backgroundCenter = camera.Position + forward * backgroundDepth;
+
+        quads.Add(new SpriteQuad(
+            backgroundCenter,
+            backgroundWidth,
+            backgroundHeight,
+            MenuBackgroundBlockId,
+            0,
+            _menuBackgroundUvMin,
+            _menuBackgroundUvMax,
+            Vector3.One,
+            1f));
+
+        var logoDepth = 2.55f;
+        var logoPlaneHeight = 2f * MathF.Tan(fovRadians * 0.5f) * logoDepth;
+        var logoPlaneWidth = logoPlaneHeight * aspect;
+        var logoWidth = logoPlaneWidth * 0.34f;
+        var logoHeight = logoWidth / MathF.Max(0.001f, _menuLogoAspect);
+        var logoCenter =
+            camera.Position +
+            forward * logoDepth +
+            up * (logoPlaneHeight * 0.19f);
+
+        quads.Add(new SpriteQuad(
+            logoCenter,
+            logoWidth,
+            logoHeight,
+            MenuLogoBlockId,
+            0,
+            _menuLogoUvMin,
+            _menuLogoUvMax,
+            Vector3.One,
+            1f));
+    }
+
+    private static Vector2 ResolveSpriteUv(SpriteQuad sprite, float localUvX, float localUvY)
+    {
+        if (sprite.BlockId is MenuBackgroundBlockId or MenuLogoBlockId)
+        {
+            return new Vector2(localUvX, localUvY);
+        }
+
+        return ResolveSpriteAtlasUv(localUvX, localUvY, sprite.TextureIndex);
+    }
+
+    private void EnsureSpriteBufferCapacity(int vertexCount, int indexCount)
+    {
+        if (vertexCount <= _spriteVertexCapacity && indexCount <= _spriteIndexCapacity)
+        {
+            return;
+        }
+
+        DestroySpriteBuffers();
+
+        _spriteVertexCapacity = Math.Max(vertexCount, Math.Max(64, _spriteVertexCapacity * 2));
+        _spriteIndexCapacity = Math.Max(indexCount, Math.Max(96, _spriteIndexCapacity * 2));
+
+        CreateBuffer(
+            checked((ulong)(_spriteVertexCapacity * Marshal.SizeOf<VoxelVertex>())),
+            BufferUsageFlags.VertexBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out _spriteVertexBuffer,
+            out _spriteVertexMemory);
+
+        CreateBuffer(
+            checked((ulong)(_spriteIndexCapacity * sizeof(uint))),
+            BufferUsageFlags.IndexBufferBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            out _spriteIndexBuffer,
+            out _spriteIndexMemory);
+    }
+
+    private void DestroySpriteBuffers()
+    {
+        _spriteIndexCount = 0;
+        _spriteVertexCapacity = 0;
+        _spriteIndexCapacity = 0;
+
+        if (_spriteIndexBuffer.Handle != 0)
+        {
+            _vk.DestroyBuffer(_device, _spriteIndexBuffer, null);
+            _spriteIndexBuffer = default;
+        }
+
+        if (_spriteIndexMemory.Handle != 0)
+        {
+            _vk.FreeMemory(_device, _spriteIndexMemory, null);
+            _spriteIndexMemory = default;
+        }
+
+        if (_spriteVertexBuffer.Handle != 0)
+        {
+            _vk.DestroyBuffer(_device, _spriteVertexBuffer, null);
+            _spriteVertexBuffer = default;
+        }
+
+        if (_spriteVertexMemory.Handle != 0)
+        {
+            _vk.FreeMemory(_device, _spriteVertexMemory, null);
+            _spriteVertexMemory = default;
+        }
+    }
+
+    private static Vector2 ResolveSpriteAtlasUv(float localUvX, float localUvY, int textureIndex)
+    {
+        var tileX = textureIndex % BlockTextureAtlas.TilesPerRow;
+        var tileY = textureIndex / BlockTextureAtlas.TilesPerRow;
+        var atlasWidth = (float)BlockTextureAtlas.GetAtlasWidth();
+        var atlasHeight = (float)BlockTextureAtlas.GetAtlasHeight();
+        var paddedTileSize = BlockTextureAtlas.PaddedTileSize;
+        var tilePixelX = tileX * paddedTileSize + BlockTextureAtlas.TilePadding;
+        var tilePixelY = tileY * paddedTileSize + BlockTextureAtlas.TilePadding;
+        return new Vector2(
+            (tilePixelX + localUvX * BlockTextureAtlas.TileSize) / atlasWidth,
+            (tilePixelY + localUvY * BlockTextureAtlas.TileSize) / atlasHeight);
     }
 
     private bool TryFindQueueFamilies(PhysicalDevice device, out uint graphicsFamily, out uint presentFamily)
@@ -1771,11 +2144,6 @@ public unsafe sealed class VulkanRenderer : IDisposable
             _vk.FreeMemory(_device, _cameraUniformMemory, null);
         }
 
-        if (_blockAtlasSampler.Handle != 0)
-        {
-            _vk.DestroySampler(_device, _blockAtlasSampler, null);
-        }
-
         if (_environmentAtlasSampler.Handle != 0)
         {
             _vk.DestroySampler(_device, _environmentAtlasSampler, null);
@@ -1796,20 +2164,27 @@ public unsafe sealed class VulkanRenderer : IDisposable
             _vk.FreeMemory(_device, _environmentAtlasMemory, null);
         }
 
-        if (_blockAtlasImageView.Handle != 0)
+        if (_menuAtlasSampler.Handle != 0)
         {
-            _vk.DestroyImageView(_device, _blockAtlasImageView, null);
+            _vk.DestroySampler(_device, _menuAtlasSampler, null);
         }
 
-        if (_blockAtlasImage.Handle != 0)
+        if (_menuAtlasImageView.Handle != 0)
         {
-            _vk.DestroyImage(_device, _blockAtlasImage, null);
+            _vk.DestroyImageView(_device, _menuAtlasImageView, null);
         }
 
-        if (_blockAtlasMemory.Handle != 0)
+        if (_menuAtlasImage.Handle != 0)
         {
-            _vk.FreeMemory(_device, _blockAtlasMemory, null);
+            _vk.DestroyImage(_device, _menuAtlasImage, null);
         }
+
+        if (_menuAtlasMemory.Handle != 0)
+        {
+            _vk.FreeMemory(_device, _menuAtlasMemory, null);
+        }
+
+        DestroyBlockAtlasResources();
 
         if (_descriptorSetLayout.Handle != 0)
         {
@@ -1839,6 +2214,33 @@ public unsafe sealed class VulkanRenderer : IDisposable
         }
     }
 
+    private void DestroyBlockAtlasResources()
+    {
+        if (_blockAtlasSampler.Handle != 0)
+        {
+            _vk.DestroySampler(_device, _blockAtlasSampler, null);
+            _blockAtlasSampler = default;
+        }
+
+        if (_blockAtlasImageView.Handle != 0)
+        {
+            _vk.DestroyImageView(_device, _blockAtlasImageView, null);
+            _blockAtlasImageView = default;
+        }
+
+        if (_blockAtlasImage.Handle != 0)
+        {
+            _vk.DestroyImage(_device, _blockAtlasImage, null);
+            _blockAtlasImage = default;
+        }
+
+        if (_blockAtlasMemory.Handle != 0)
+        {
+            _vk.FreeMemory(_device, _blockAtlasMemory, null);
+            _blockAtlasMemory = default;
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private readonly record struct CameraUniform(
         Matrix4x4 View,
@@ -1847,7 +2249,31 @@ public unsafe sealed class VulkanRenderer : IDisposable
         Vector4 FogColor,
         Vector4 SkyLightColor,
         Vector4 FogSettings,
-        Vector4 LightDirection);
+        Vector4 LightDirection,
+        Vector4 CloudColor,
+        Vector4 CloudMotion,
+        Vector4 CloudOffset);
+
+    private readonly record struct SpriteQuad(
+        Vector3 Position,
+        float Width,
+        float Height,
+        uint BlockId,
+        int TextureIndex,
+        Vector2 UvMin,
+        Vector2 UvMax,
+        Vector3 Tint,
+        float Alpha);
+
+    private static Vector2 ResolveCloudMotion(GameSettings settings)
+    {
+        if (settings.CloudDirection.LengthSquared() < 0.0001f)
+        {
+            return Vector2.UnitX;
+        }
+
+        return Vector2.Normalize(settings.CloudDirection);
+    }
 
     private readonly record struct SwapchainSupportDetails(
         SurfaceCapabilitiesKHR Capabilities,

@@ -38,7 +38,7 @@ public sealed class ChunkGenerator
         _caveGenerator = caveGenerator;
     }
 
-    public void Generate(Chunk chunk)
+    public void Generate(ChunkData chunk)
     {
         var baseX = chunk.Coord.X * Chunk.SizeX;
         var baseZ = chunk.Coord.Z * Chunk.SizeZ;
@@ -57,7 +57,6 @@ public sealed class ChunkGenerator
 
         AddCrystalFormation(chunk);
         AddTrees(chunk);
-        chunk.MarkDirty();
     }
 
     public WorldColumnSample SampleColumn(int worldX, int worldZ)
@@ -125,7 +124,7 @@ public sealed class ChunkGenerator
         return _caveGenerator.Sample(worldX, worldY, worldZ, column.SurfaceHeight);
     }
 
-    private void FillColumn(Chunk chunk, int localX, int worldX, int localZ, int worldZ, WorldColumnSample column, CaveSettings caveSettings)
+    private void FillColumn(ChunkData chunk, int localX, int worldX, int localZ, int worldZ, WorldColumnSample column, CaveSettings caveSettings)
     {
         FillRange(chunk, localX, localZ, Chunk.MinY, Math.Min(_settings.BedrockThickness, column.SurfaceHeight), BlockType.Stone);
 
@@ -242,7 +241,7 @@ public sealed class ChunkGenerator
         return int.MinValue;
     }
 
-    private void AddCrystalFormation(Chunk chunk)
+    private void AddCrystalFormation(ChunkData chunk)
     {
         var settings = _settings.Crystals;
         var chance = _noise.Hash01(chunk.Coord.X, 500, chunk.Coord.Z);
@@ -280,7 +279,7 @@ public sealed class ChunkGenerator
         }
     }
 
-    private void AddTrees(Chunk chunk)
+    private void AddTrees(ChunkData chunk)
     {
         var baseX = chunk.Coord.X * Chunk.SizeX;
         var baseZ = chunk.Coord.Z * Chunk.SizeZ;
@@ -296,7 +295,7 @@ public sealed class ChunkGenerator
         }
     }
 
-    private void TryGenerateTreeFromCell(Chunk chunk, int cellX, int cellZ)
+    private void TryGenerateTreeFromCell(ChunkData chunk, int cellX, int cellZ)
     {
         var settings = _settings.Trees;
         var cellSize = settings.CellSize;
@@ -328,7 +327,7 @@ public sealed class ChunkGenerator
         PlaceOakTree(chunk, worldX, baseY, worldZ, trunkHeight);
     }
 
-    private bool CanPlaceOakTree(Chunk chunk, int worldX, int baseY, int worldZ, int trunkHeight)
+    private bool CanPlaceOakTree(ChunkData chunk, int worldX, int baseY, int worldZ, int trunkHeight)
     {
         if (baseY < Chunk.MinY + 1 || baseY + trunkHeight + 1 >= Chunk.MaxYExclusive)
         {
@@ -371,7 +370,7 @@ public sealed class ChunkGenerator
         return true;
     }
 
-    private void PlaceOakTree(Chunk chunk, int worldX, int baseY, int worldZ, int trunkHeight)
+    private void PlaceOakTree(ChunkData chunk, int worldX, int baseY, int worldZ, int trunkHeight)
     {
         TrySetWorld(chunk, worldX, baseY - 1, worldZ, BlockType.Dirt);
 
@@ -433,7 +432,7 @@ public sealed class ChunkGenerator
         };
     }
 
-    private BlockType SampleGeneratedBlock(Chunk chunk, int worldX, int worldY, int worldZ)
+    private BlockType SampleGeneratedBlock(ChunkData chunk, int worldX, int worldY, int worldZ)
     {
         if (worldY < Chunk.MinY || worldY >= Chunk.MaxYExclusive)
         {
@@ -465,7 +464,7 @@ public sealed class ChunkGenerator
         return remainder != 0 && (remainder < 0) != (divisor < 0) ? result - 1 : result;
     }
 
-    private static void TrySetWorld(Chunk chunk, int worldX, int y, int worldZ, BlockType type)
+    private static void TrySetWorld(ChunkData chunk, int worldX, int y, int worldZ, BlockType type)
     {
         var localX = worldX - chunk.Coord.X * Chunk.SizeX;
         var localZ = worldZ - chunk.Coord.Z * Chunk.SizeZ;
@@ -505,7 +504,7 @@ public sealed class ChunkGenerator
         };
     }
 
-    private static void TrySet(Chunk chunk, int x, int y, int z, BlockType type)
+    private static void TrySet(ChunkData chunk, int x, int y, int z, BlockType type)
     {
         if (Chunk.ContainsLocal(x, y, z))
         {
@@ -513,7 +512,7 @@ public sealed class ChunkGenerator
         }
     }
 
-    private static void FillRange(Chunk chunk, int localX, int localZ, int startY, int endY, BlockType type)
+    private static void FillRange(ChunkData chunk, int localX, int localZ, int startY, int endY, BlockType type)
     {
         if (type == BlockType.Air || startY > endY)
         {
@@ -528,7 +527,7 @@ public sealed class ChunkGenerator
         }
     }
 
-    private void FillDeepRange(Chunk chunk, int localX, int worldX, int localZ, int worldZ, int startY, int endY, WorldColumnSample column)
+    private void FillDeepRange(ChunkData chunk, int localX, int worldX, int localZ, int worldZ, int startY, int endY, WorldColumnSample column)
     {
         if (startY > endY)
         {

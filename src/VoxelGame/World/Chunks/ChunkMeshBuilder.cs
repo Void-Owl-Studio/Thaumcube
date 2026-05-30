@@ -38,7 +38,7 @@ public sealed class ChunkMeshBuilder
             new[] { new Vector2(0, 1), new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1) })
     ];
 
-    public ChunkSectionMeshes BuildSection(VoxelWorld world, Chunk chunk, int sectionIndex)
+    public ChunkSectionMeshes BuildSection(IBlockWorld world, ChunkData chunk, int sectionIndex)
     {
         var opaqueVertices = new List<VoxelVertex>(2048);
         var opaqueIndices = new List<uint>(4096);
@@ -97,8 +97,8 @@ public sealed class ChunkMeshBuilder
     }
 
     private static void AddFace(
-        VoxelWorld world,
-        Chunk chunk,
+        IBlockWorld world,
+        ChunkData chunk,
         int chunkBaseX,
         int chunkBaseZ,
         List<VoxelVertex> vertices,
@@ -188,10 +188,27 @@ public sealed class ChunkMeshBuilder
     {
         var vertices = new List<VoxelVertex>(4);
         var indices = new List<uint>(6);
+        AppendBillboardParticleQuad(vertices, indices, center, size, block, blocks, cameraRight, cameraUp, uvMin, uvMax);
+        return new ChunkRenderMesh(new ChunkCoord(int.MinValue, int.MinValue), vertices, indices, key, isTransparent: true);
+    }
+
+    public static void AppendBillboardParticleQuad(
+        List<VoxelVertex> vertices,
+        List<uint> indices,
+        Vector3 center,
+        float size,
+        BlockType block,
+        BlockRegistry blocks,
+        Vector3 cameraRight,
+        Vector3 cameraUp,
+        Vector2 uvMin,
+        Vector2 uvMax)
+    {
         var halfRight = Vector3.Normalize(cameraRight) * size * 0.5f;
         var halfUp = Vector3.Normalize(cameraUp) * size * 0.5f;
-        var faceNormal = Vector3.Normalize(Vector3.Cross(cameraUp, cameraRight));
-        var textureIndex = blocks.GetFaceTextureIndex(block, Vector3.UnitZ);
+        var faceNormal = Vector3.Normalize(Vector3.Cross(cameraRight, cameraUp));
+        var textureIndex = blocks.GetFaceTextureIndex(block, Vector3.UnitY);
+        var start = (uint)vertices.Count;
 
         Span<Vector3> corners =
         [
@@ -218,8 +235,12 @@ public sealed class ChunkMeshBuilder
             vertices.Add(new VoxelVertex(corners[i], faceNormal, AtlasUv(localUv, textureIndex), (uint)block, ResolveItemTint(block, Vector3.UnitY)));
         }
 
-        AddQuadIndices(indices, 0);
-        return new ChunkRenderMesh(new ChunkCoord(int.MinValue, int.MinValue), vertices, indices, key, isTransparent: true);
+        AddQuadIndices(indices, start);
+    }
+
+    public static Vector3 ResolveBillboardTint(BlockType block)
+    {
+        return ResolveItemTint(block, Vector3.UnitY);
     }
 
     public static ChunkRenderMesh BuildBreakOverlayMesh(BlockPosition blockPosition, BlockPosition faceNormal, int stage)
@@ -281,7 +302,7 @@ public sealed class ChunkMeshBuilder
             (tilePixelY + localUv.Y * BlockTextureAtlas.TileSize) / atlasHeight);
     }
 
-    private static Vector3 ResolveTint(VoxelWorld world, BlockType block, Vector3 faceNormal, int worldX, int worldY, int worldZ)
+    private static Vector3 ResolveTint(IBlockWorld world, BlockType block, Vector3 faceNormal, int worldX, int worldY, int worldZ)
     {
         if (block == BlockType.Water)
         {
@@ -335,7 +356,7 @@ public sealed class ChunkMeshBuilder
         return faceNormal.Y > 0.5f ? grassTint : Vector3.Lerp(Vector3.One, grassTint, 0.55f);
     }
 
-    private static float SampleAmbientOcclusion(VoxelWorld world, Chunk chunk, int chunkBaseX, int chunkBaseZ, Vector3 origin, Vector3 normal, Vector3 corner)
+    private static float SampleAmbientOcclusion(IBlockWorld world, ChunkData chunk, int chunkBaseX, int chunkBaseZ, Vector3 origin, Vector3 normal, Vector3 corner)
     {
         var blockX = (int)origin.X;
         var blockY = (int)origin.Y;
@@ -365,7 +386,7 @@ public sealed class ChunkMeshBuilder
         };
     }
 
-    private static bool IsOccluding(VoxelWorld world, Chunk chunk, int chunkBaseX, int chunkBaseZ, int blockX, int blockY, int blockZ, Vector3 offset)
+    private static bool IsOccluding(IBlockWorld world, ChunkData chunk, int chunkBaseX, int chunkBaseZ, int blockX, int blockY, int blockZ, Vector3 offset)
     {
         var sampleX = blockX + (int)offset.X;
         var sampleY = blockY + (int)offset.Y;
@@ -374,7 +395,7 @@ public sealed class ChunkMeshBuilder
     }
 
     private static bool ShouldRenderFace(
-        VoxelWorld world,
+        IBlockWorld world,
         BlockType block,
         Vector3 faceNormal,
         BlockType neighborBlock,
@@ -431,7 +452,7 @@ public sealed class ChunkMeshBuilder
         return corner;
     }
 
-    private static BlockType GetBlockForMesh(VoxelWorld world, Chunk chunk, int chunkBaseX, int chunkBaseZ, int worldX, int y, int worldZ)
+    private static BlockType GetBlockForMesh(IBlockWorld world, ChunkData chunk, int chunkBaseX, int chunkBaseZ, int worldX, int y, int worldZ)
     {
         if (y < Chunk.MinY || y >= Chunk.MaxYExclusive)
         {
@@ -448,7 +469,7 @@ public sealed class ChunkMeshBuilder
         return world.GetBlock(worldX, y, worldZ);
     }
 
-    private static bool IsTransparentForMesh(VoxelWorld world, Chunk chunk, int chunkBaseX, int chunkBaseZ, int worldX, int y, int worldZ)
+    private static bool IsTransparentForMesh(IBlockWorld world, ChunkData chunk, int chunkBaseX, int chunkBaseZ, int worldX, int y, int worldZ)
     {
         if (y < Chunk.MinY)
         {

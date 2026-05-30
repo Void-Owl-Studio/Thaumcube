@@ -6,7 +6,30 @@ public static class HudLayout
 {
     public static MainMenuLayout BuildMainMenu(int width, int height)
     {
-        return BuildCenteredButtons(width, height, ["SINGLEPLAYER", "SETTINGS", "EXIT"], width / 3, 180);
+        var scale = Math.Clamp(width / 520, 2, 4);
+        var previewWidth = Math.Clamp(width / 5, 180, 250);
+        var previewHeight = Math.Clamp(height / 2, 260, 360);
+        var gap = Math.Clamp(width / 28, 24, 56);
+        var buttonWidth = Math.Clamp(width / 4, 290, 430);
+        var buttonHeight = Math.Clamp(height / 20, 34, 42);
+        var buttonSpacing = buttonHeight + Math.Clamp(height / 48, 12, 18);
+        var contentWidth = previewWidth + gap + buttonWidth;
+        var startX = Math.Max(28, (width - contentWidth) / 2);
+        var previewY = Math.Max(height / 3, 206);
+        var buttonsX = startX + previewWidth + gap;
+        var totalButtonHeight = buttonSpacing * 5 + buttonHeight;
+        var buttonsY = previewY + Math.Max(4, (previewHeight - totalButtonHeight) / 2);
+        var options = new[] { "SINGLEPLAYER", "SETTINGS", "BODY NORMAL", "LOAD SKIN", "APPLY SKIN", "EXIT" };
+        var items = new MenuButtonLayout[options.Length];
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            var textWidth = TextWidth(options[i], scale);
+            var boxWidth = Math.Max(textWidth + 56, buttonWidth);
+            items[i] = new MenuButtonLayout(i, new UiRect(buttonsX, buttonsY + i * buttonSpacing, boxWidth, buttonHeight));
+        }
+
+        return new MainMenuLayout(scale, items, new UiRect(startX, previewY, previewWidth, previewHeight));
     }
 
     public static MainMenuLayout BuildPauseMenu(int width, int height)
@@ -96,6 +119,59 @@ public static class HudLayout
         return new HotbarLayout(slotSize, gap, startX, y);
     }
 
+    public static InventoryLayout BuildInventory(int width, int height)
+    {
+        const int mainSlotCount = 27;
+        const int columns = 9;
+        var rows = (int)Math.Ceiling(mainSlotCount / (float)columns);
+        var slotSize = Math.Clamp(Math.Min(width / 24, height / 12), 28, 42);
+        var gap = Math.Max(4, slotSize / 8);
+        var padding = Math.Max(16, slotSize / 2);
+        var titleHeight = 24;
+        var headerGap = 12;
+        var mainWidth = columns * slotSize + (columns - 1) * gap;
+        var hotbarWidth = Hotbar.SlotCount * slotSize + (Hotbar.SlotCount - 1) * gap;
+        var contentWidth = Math.Max(mainWidth, hotbarWidth);
+        var panelWidth = contentWidth + padding * 2;
+        var panelHeight = titleHeight + headerGap + rows * slotSize + (rows - 1) * gap + padding + slotSize + 22;
+        var panelX = (width - panelWidth) / 2;
+        var panelY = Math.Max(28, (height - panelHeight) / 2);
+
+        var mainStartX = panelX + padding + (contentWidth - mainWidth) / 2;
+        var mainStartY = panelY + padding + titleHeight + headerGap;
+        var mainSlots = new UiRect[mainSlotCount];
+        for (var i = 0; i < mainSlotCount; i++)
+        {
+            var row = i / columns;
+            var column = i % columns;
+            mainSlots[i] = new UiRect(
+                mainStartX + column * (slotSize + gap),
+                mainStartY + row * (slotSize + gap),
+                slotSize,
+                slotSize);
+        }
+
+        var hotbarStartX = panelX + padding + (contentWidth - hotbarWidth) / 2;
+        var hotbarY = mainStartY + rows * (slotSize + gap) - gap + padding;
+        var hotbarSlots = new UiRect[Hotbar.SlotCount];
+        for (var i = 0; i < Hotbar.SlotCount; i++)
+        {
+            hotbarSlots[i] = new UiRect(
+                hotbarStartX + i * (slotSize + gap),
+                hotbarY,
+                slotSize,
+                slotSize);
+        }
+
+        return new InventoryLayout(
+            slotSize,
+            gap,
+            new UiRect(panelX, panelY, panelWidth, panelHeight),
+            new UiRect(panelX + padding, panelY + padding, contentWidth, titleHeight),
+            mainSlots,
+            hotbarSlots);
+    }
+
     public static int? HitTestMainMenu(Vector2 mousePosition, int width, int height)
     {
         var layout = BuildMainMenu(width, height);
@@ -160,6 +236,28 @@ public static class HudLayout
         return null;
     }
 
+    public static InventoryHitResult HitTestInventory(Vector2 mousePosition, int width, int height)
+    {
+        var layout = BuildInventory(width, height);
+        for (var i = 0; i < layout.MainSlots.Count; i++)
+        {
+            if (layout.MainSlots[i].Contains(mousePosition))
+            {
+                return new InventoryHitResult(InventoryArea.Main, i);
+            }
+        }
+
+        for (var i = 0; i < layout.HotbarSlots.Count; i++)
+        {
+            if (layout.HotbarSlots[i].Contains(mousePosition))
+            {
+                return new InventoryHitResult(InventoryArea.Hotbar, i);
+            }
+        }
+
+        return new InventoryHitResult(InventoryArea.None, -1);
+    }
+
     public static int TextWidth(string text, int scale)
     {
         var width = 0;
@@ -186,7 +284,7 @@ public static class HudLayout
             items[i] = new MenuButtonLayout(i, new UiRect(boxX, boxY, boxWidth, 32));
         }
 
-        return new MainMenuLayout(menuScale, items);
+        return new MainMenuLayout(menuScale, items, default);
     }
 
     private static int? HitTestButtons(Vector2 mousePosition, IReadOnlyList<MenuButtonLayout> items)
@@ -203,7 +301,7 @@ public static class HudLayout
     }
 }
 
-public readonly record struct MainMenuLayout(int Scale, IReadOnlyList<MenuButtonLayout> Items);
+public readonly record struct MainMenuLayout(int Scale, IReadOnlyList<MenuButtonLayout> Items, UiRect PlayerPreviewBounds);
 
 public readonly record struct WorldSelectionLayout(
     int Scale,
@@ -233,6 +331,23 @@ public readonly record struct HotbarLayout(int SlotSize, int Gap, int StartX, in
         return new UiRect(StartX + index * (SlotSize + Gap), Y, SlotSize, SlotSize);
     }
 }
+
+public readonly record struct InventoryLayout(
+    int SlotSize,
+    int Gap,
+    UiRect PanelBounds,
+    UiRect TitleBounds,
+    IReadOnlyList<UiRect> MainSlots,
+    IReadOnlyList<UiRect> HotbarSlots);
+
+public enum InventoryArea
+{
+    None,
+    Main,
+    Hotbar
+}
+
+public readonly record struct InventoryHitResult(InventoryArea Area, int Index);
 
 public readonly record struct UiRect(int X, int Y, int Width, int Height)
 {

@@ -3,6 +3,7 @@ using ImageSharpImage = SixLabors.ImageSharp.Image;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Silk.NET.Vulkan;
+using VoxelGame.Player;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 
@@ -13,11 +14,19 @@ internal unsafe sealed class VulkanImmediatePreview
     private readonly Vk _vk;
     private readonly BlockRegistry _blocks = new();
     private readonly Dictionary<int, TextureTile> _blockTiles;
+    private readonly PlayerModel _menuPlayerModel = new();
+    private TextureTile _playerSkin;
 
     public VulkanImmediatePreview(Vk vk)
     {
         _vk = vk;
         _blockTiles = LoadBlockTiles();
+        _playerSkin = LoadPlayerSkinTile();
+    }
+
+    public void ReloadPlayerSkin()
+    {
+        _playerSkin = LoadPlayerSkinTile();
     }
 
     public void Draw(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene)
@@ -48,6 +57,12 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawHud(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
+        if (scene.Hud.ShowBusyOverlay)
+        {
+            DrawBusyOverlay(commandBuffer, extent, scene, width, height);
+            return;
+        }
+
         if (scene.Hud.ShowMenu)
         {
             DrawMenu(commandBuffer, extent, scene, width, height);
@@ -56,6 +71,12 @@ internal unsafe sealed class VulkanImmediatePreview
 
         var pulse = scene.Hud.SelectedBlock is BlockType.ArcaneCrystal or BlockType.MagicOre ? 0.18f : 0.0f;
         DrawStatusOverlay(commandBuffer, extent, scene, width);
+        if (scene.Hud.ShowInventory)
+        {
+            DrawInventory(commandBuffer, extent, scene, width, height);
+            return;
+        }
+
         DrawCrosshair(commandBuffer, extent, width, height, new Rgba(0.72f + pulse, 0.94f, 0.88f, 1f));
         DrawHotbar(commandBuffer, extent, scene, width, height);
     }
@@ -70,23 +91,61 @@ internal unsafe sealed class VulkanImmediatePreview
         DrawText(commandBuffer, extent, text, 16, 15, scale, new Rgba(0.82f, 0.94f, 0.90f, 1f));
     }
 
+    private void DrawBusyOverlay(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.025f, 0.018f, 0.035f, 0.94f));
+
+        var panelWidth = Math.Clamp(width / 2, 340, 620);
+        var panelHeight = 140;
+        var panelX = (width - panelWidth) / 2;
+        var panelY = (height - panelHeight) / 2;
+        DrawRect(commandBuffer, extent, panelX - 6, panelY - 6, panelWidth + 12, panelHeight + 12, new Rgba(0.11f, 0.14f, 0.16f, 1f));
+        DrawRect(commandBuffer, extent, panelX, panelY, panelWidth, panelHeight, new Rgba(0.14f, 0.16f, 0.20f, 1f));
+
+        var title = string.IsNullOrWhiteSpace(scene.Hud.BusyTitle) ? "WORKING" : scene.Hud.BusyTitle;
+        DrawText(commandBuffer, extent, title, panelX + 24, panelY + 22, 3, new Rgba(0.62f, 0.96f, 0.82f, 1f));
+
+        if (!string.IsNullOrWhiteSpace(scene.Hud.BusyStatusText))
+        {
+            DrawText(commandBuffer, extent, scene.Hud.BusyStatusText, panelX + 24, panelY + 58, 2, new Rgba(0.78f, 0.86f, 0.84f, 1f));
+        }
+
+        var progressBarX = panelX + 24;
+        var progressBarY = panelY + 94;
+        var progressBarWidth = panelWidth - 48;
+        var progressBarHeight = 18;
+        var progress = Math.Clamp(scene.Hud.BusyProgress, 0f, 1f);
+        DrawRect(commandBuffer, extent, progressBarX, progressBarY, progressBarWidth, progressBarHeight, new Rgba(0.08f, 0.10f, 0.12f, 1f));
+        DrawRect(commandBuffer, extent, progressBarX + 2, progressBarY + 2, Math.Max(0, (int)((progressBarWidth - 4) * progress)), progressBarHeight - 4, new Rgba(0.30f, 0.82f, 0.68f, 1f));
+
+        var percentText = $"{(int)MathF.Round(progress * 100f)}%";
+        DrawText(commandBuffer, extent, percentText, panelX + panelWidth - TextWidth(percentText, 2) - 24, panelY + 58, 2, new Rgba(0.88f, 0.90f, 0.84f, 1f));
+    }
+
     private void DrawMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
         if (scene.Hud.ShowPauseOverlay)
         {
             DrawPauseBackdrop(commandBuffer, extent, scene, width, height);
         }
+        else if (scene.Hud.MenuScreen == MenuScreen.Main)
+        {
+            DrawMainMenuBackdrop(commandBuffer, extent, width, height);
+        }
         else
         {
             DrawRect(commandBuffer, extent, 0, 0, width, height, new Rgba(0.025f, 0.018f, 0.035f, 0.92f));
         }
 
-        var scale = Math.Clamp(width / 320, 3, 5);
-        var title = scene.Hud.MenuTitle;
-        DrawText(commandBuffer, extent, title, (width - TextWidth(title, scale)) / 2, height / 5, scale, new Rgba(0.62f, 0.96f, 0.82f, 1f));
-        if (!string.IsNullOrWhiteSpace(scene.Hud.MenuSubtitle))
+        if (scene.Hud.MenuScreen != MenuScreen.Main)
         {
-            DrawText(commandBuffer, extent, scene.Hud.MenuSubtitle, (width - TextWidth(scene.Hud.MenuSubtitle, 2)) / 2, height / 5 + 38, 2, new Rgba(0.54f, 0.68f, 0.64f, 1f));
+            var scale = Math.Clamp(width / 320, 3, 5);
+            var title = scene.Hud.MenuTitle;
+            DrawText(commandBuffer, extent, title, (width - TextWidth(title, scale)) / 2, height / 5, scale, new Rgba(0.62f, 0.96f, 0.82f, 1f));
+            if (!string.IsNullOrWhiteSpace(scene.Hud.MenuSubtitle))
+            {
+                DrawText(commandBuffer, extent, scene.Hud.MenuSubtitle, (width - TextWidth(scene.Hud.MenuSubtitle, 2)) / 2, height / 5 + 38, 2, new Rgba(0.54f, 0.68f, 0.64f, 1f));
+            }
         }
 
         switch (scene.Hud.MenuScreen)
@@ -120,6 +179,10 @@ internal unsafe sealed class VulkanImmediatePreview
                 statusScale,
                 new Rgba(0.88f, 0.82f, 0.64f, 1f));
         }
+    }
+
+    private void DrawMainMenuBackdrop(CommandBuffer commandBuffer, Extent2D extent, int width, int height)
+    {
     }
 
     private void DrawPauseBackdrop(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -180,15 +243,161 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawRootMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
-        var options = new[] { "SINGLEPLAYER", "SETTINGS", "EXIT" };
         var layout = HudLayout.BuildMainMenu(width, height);
         var menuScale = layout.Scale;
+        DrawMainMenuLogo(commandBuffer, extent, scene, width, height);
+        DrawPlayerPreviewPanel(commandBuffer, extent, scene, layout.PlayerPreviewBounds);
 
+        var options = new[]
+        {
+            "SINGLEPLAYER",
+            "SETTINGS",
+            scene.Hud.MenuPlayerBodyType == PlayerBodyType.Slim ? "BODY SLIM" : "BODY NORMAL",
+            "LOAD SKIN",
+            "APPLY SKIN",
+            "EXIT"
+        };
         for (var i = 0; i < options.Length; i++)
         {
             var bounds = layout.Items[i].Bounds;
             DrawMenuButton(commandBuffer, extent, bounds, options[i], menuScale, i == scene.Hud.MainMenuSelectedIndex);
         }
+
+        var skinText = string.IsNullOrWhiteSpace(scene.Hud.MenuSkinText) ? "DEFAULT SKIN" : scene.Hud.MenuSkinText;
+        var skinScale = 1;
+        var skinX = layout.PlayerPreviewBounds.X + (layout.PlayerPreviewBounds.Width - TextWidth(skinText, skinScale)) / 2;
+        DrawText(commandBuffer, extent, skinText, skinX, layout.PlayerPreviewBounds.Bottom - 22, skinScale, scene.Hud.MenuSkinReadyToApply ? new Rgba(0.90f, 0.76f, 0.42f, 1f) : new Rgba(0.62f, 0.56f, 0.74f, 1f));
+
+        var versionText = "ALPHA BUILD";
+        var versionScale = 1;
+        DrawText(
+            commandBuffer,
+            extent,
+            versionText,
+            (width - TextWidth(versionText, versionScale)) / 2,
+            height - 36,
+            versionScale,
+            new Rgba(0.60f, 0.55f, 0.68f, 1f));
+    }
+
+    private void DrawMainMenuLogo(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        if (!string.IsNullOrWhiteSpace(scene.Hud.MenuSubtitle))
+        {
+            var subtitleScale = 2;
+            var subtitleY = Math.Max(136, height / 4);
+            DrawText(
+                commandBuffer,
+                extent,
+                scene.Hud.MenuSubtitle,
+                (width - TextWidth(scene.Hud.MenuSubtitle, subtitleScale)) / 2,
+                subtitleY,
+                subtitleScale,
+                new Rgba(0.82f, 0.78f, 0.64f, 1f));
+        }
+    }
+
+    private void DrawPlayerPreviewPanel(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, UiRect bounds)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        DrawOutlinedPanel(commandBuffer, extent, bounds, new Rgba(0.74f, 0.56f, 0.28f, 1f), new Rgba(0.055f, 0.030f, 0.065f, 0.96f));
+        DrawCornerRunes(commandBuffer, extent, bounds, new Rgba(0.78f, 0.58f, 0.32f, 1f), 8);
+        DrawText(commandBuffer, extent, "PLAYER", bounds.X + 14, bounds.Y + 12, 2, new Rgba(0.88f, 0.84f, 0.74f, 1f));
+
+        var modelBounds = new UiRect(bounds.X + 12, bounds.Y + 40, bounds.Width - 24, bounds.Height - 74);
+        DrawMagicRing(commandBuffer, extent, new Vector2(modelBounds.X + modelBounds.Width * 0.5f, modelBounds.Bottom - 18), Math.Min(modelBounds.Width / 3, 54), new Rgba(0.58f, 0.22f, 0.82f, 1f));
+        DrawPlayerModelPreview(commandBuffer, extent, scene, modelBounds);
+    }
+
+    private void DrawPlayerModelPreview(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, UiRect bounds)
+    {
+        var cameraPosition = new Vector3(0f, 1.15f, -4.4f);
+        var target = new Vector3(0f, 0.92f, 0f);
+        var forward = Vector3.Normalize(target - cameraPosition);
+        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, forward));
+        var up = Vector3.Normalize(Vector3.Cross(forward, right));
+        var center = new Vector2(bounds.X + bounds.Width * 0.5f, bounds.Y + bounds.Height * 0.56f);
+        var focalLength = bounds.Height * 1.42f;
+        var yaw = scene.ElapsedSeconds * 18f + 28f;
+        _menuPlayerModel.BodyType = scene.Hud.MenuPlayerBodyType;
+        var meshes = _menuPlayerModel.BuildRenderMeshes(Vector3.Zero, yaw, 0f, hideHead: false);
+        var triangles = new List<ProjectedTexturedTriangle>();
+
+        foreach (var mesh in meshes)
+        {
+            for (var i = 0; i + 2 < mesh.Indices.Length; i += 3)
+            {
+                var a = mesh.Vertices[(int)mesh.Indices[i]];
+                var b = mesh.Vertices[(int)mesh.Indices[i + 1]];
+                var c = mesh.Vertices[(int)mesh.Indices[i + 2]];
+                var normal = Vector3.Normalize(a.Normal + b.Normal + c.Normal);
+                var centerWorld = (a.Position + b.Position + c.Position) / 3f;
+                if (Vector3.Dot(normal, cameraPosition - centerWorld) <= 0f)
+                {
+                    continue;
+                }
+
+                if (!ProjectPreviewPoint(a.Position, cameraPosition, forward, right, up, center, focalLength, out var pa) ||
+                    !ProjectPreviewPoint(b.Position, cameraPosition, forward, right, up, center, focalLength, out var pb) ||
+                    !ProjectPreviewPoint(c.Position, cameraPosition, forward, right, up, center, focalLength, out var pc))
+                {
+                    continue;
+                }
+
+                triangles.Add(new ProjectedTexturedTriangle(
+                    new TexturedVertex(pa.Position, PlayerAtlasUvToSkinUv(a.Uv)),
+                    new TexturedVertex(pb.Position, PlayerAtlasUvToSkinUv(b.Uv)),
+                    new TexturedVertex(pc.Position, PlayerAtlasUvToSkinUv(c.Uv)),
+                    (pa.Depth + pb.Depth + pc.Depth) / 3f));
+            }
+        }
+
+        foreach (var triangle in triangles.OrderByDescending(triangle => triangle.Depth))
+        {
+            DrawTexturedTriangle(commandBuffer, extent, bounds, _playerSkin, triangle.A, triangle.B, triangle.C);
+        }
+    }
+
+    private static bool ProjectPreviewPoint(
+        Vector3 point,
+        Vector3 cameraPosition,
+        Vector3 forward,
+        Vector3 right,
+        Vector3 up,
+        Vector2 center,
+        float focalLength,
+        out ProjectedVertex projected)
+    {
+        var relative = point - cameraPosition;
+        var depth = Vector3.Dot(relative, forward);
+        if (depth <= 0.15f)
+        {
+            projected = default;
+            return false;
+        }
+
+        var x = Vector3.Dot(relative, right);
+        var y = Vector3.Dot(relative, up);
+        projected = new ProjectedVertex(
+            new Vector2(center.X + x * focalLength / depth, center.Y - y * focalLength / depth),
+            depth);
+        return true;
+    }
+
+    private static Vector2 PlayerAtlasUvToSkinUv(Vector2 uv)
+    {
+        var atlasWidth = (float)BlockTextureAtlas.GetAtlasWidth();
+        var atlasHeight = (float)BlockTextureAtlas.GetAtlasHeight();
+        var skinUScale = BlockTextureAtlas.PlayerSkinWidth / atlasWidth;
+        var skinVScale = BlockTextureAtlas.PlayerSkinHeight / atlasHeight;
+        var skinVOffset = BlockTextureAtlas.GetBlockAtlasHeight() / atlasHeight;
+        return new Vector2(
+            Math.Clamp(uv.X / skinUScale, 0f, 1f),
+            Math.Clamp((uv.Y - skinVOffset) / skinVScale, 0f, 1f));
     }
 
     private void DrawPauseMenu(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -290,11 +499,14 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawMenuButton(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, string text, int scale, bool selected)
     {
-        var frame = selected ? new Rgba(0.56f, 0.95f, 0.78f, 1f) : new Rgba(0.16f, 0.13f, 0.18f, 1f);
-        DrawRect(commandBuffer, extent, bounds.X - 3, bounds.Y - 3, bounds.Width + 6, bounds.Height + 6, frame);
-        DrawRect(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, bounds.Height, new Rgba(0.035f, 0.030f, 0.040f, 1f));
+        var frame = selected ? new Rgba(0.94f, 0.78f, 0.42f, 1f) : new Rgba(0.60f, 0.42f, 0.20f, 1f);
+        var fill = selected ? new Rgba(0.090f, 0.050f, 0.120f, 0.96f) : new Rgba(0.028f, 0.018f, 0.040f, 0.92f);
+        DrawOutlinedPanel(commandBuffer, extent, bounds, frame, fill);
+        DrawDiamond(commandBuffer, extent, bounds.X - 10, bounds.Y + bounds.Height / 2, 5, frame);
+        DrawDiamond(commandBuffer, extent, bounds.Right + 9, bounds.Y + bounds.Height / 2, 5, frame);
         var textX = bounds.X + (bounds.Width - TextWidth(text, scale)) / 2;
-        DrawText(commandBuffer, extent, text, textX, bounds.Y + 8, scale, selected ? new Rgba(0.90f, 1f, 0.86f, 1f) : new Rgba(0.66f, 0.66f, 0.70f, 1f));
+        var textY = bounds.Y + (bounds.Height - 7 * scale) / 2;
+        DrawText(commandBuffer, extent, text, textX, textY, scale, selected ? new Rgba(0.96f, 0.93f, 0.84f, 1f) : new Rgba(0.78f, 0.76f, 0.82f, 1f));
     }
 
     private void DrawProjectedVoxelMeshes(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -434,23 +646,60 @@ internal unsafe sealed class VulkanImmediatePreview
     private void DrawHotbar(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
         var layout = HudLayout.BuildHotbar(width, height);
-        var slot = layout.SlotSize;
-        var y = layout.Y;
-
         for (var i = 0; i < Hotbar.SlotCount; i++)
         {
-            var bounds = layout.GetSlotRect(i);
-            var x = bounds.X;
-            var selected = i == scene.Hud.SelectedSlot;
-            var frame = selected ? new Rgba(0.55f, 0.95f, 0.82f, 1f) : new Rgba(0.12f, 0.10f, 0.13f, 1f);
-            DrawRect(commandBuffer, extent, x - 2, y - 2, slot + 4, slot + 4, frame);
-            DrawRect(commandBuffer, extent, x, y, slot, slot, new Rgba(0.025f, 0.021f, 0.028f, 1f));
-            var hotbarSlot = scene.Hotbar.Slots[i];
-            if (!hotbarSlot.IsEmpty)
-            {
-                DrawHotbarBlock(commandBuffer, extent, x, y, slot, hotbarSlot.Block, selected);
-                DrawHotbarCount(commandBuffer, extent, x, y, slot, hotbarSlot.Count);
-            }
+            DrawInventorySlot(commandBuffer, extent, scene, layout.GetSlotRect(i), scene.Hotbar.Slots[i], i == scene.Hud.SelectedSlot);
+        }
+    }
+
+    private void DrawInventory(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
+    {
+        var layout = HudLayout.BuildInventory(width, height);
+        var panel = layout.PanelBounds;
+        DrawRect(commandBuffer, extent, panel.X - 6, panel.Y - 6, panel.Width + 12, panel.Height + 12, new Rgba(0.11f, 0.10f, 0.12f, 0.28f));
+        DrawRect(commandBuffer, extent, panel.X - 2, panel.Y - 2, panel.Width + 4, panel.Height + 4, new Rgba(0.78f, 0.78f, 0.82f, 0.72f));
+        DrawRect(commandBuffer, extent, panel.X, panel.Y, panel.Width, panel.Height, new Rgba(0.24f, 0.24f, 0.27f, 0.42f));
+
+        DrawText(commandBuffer, extent, "INVENTORY", layout.TitleBounds.X, layout.TitleBounds.Y, 2, new Rgba(0.93f, 0.93f, 0.89f, 1f));
+
+        for (var i = 0; i < layout.MainSlots.Count; i++)
+        {
+            DrawInventorySlot(commandBuffer, extent, scene, layout.MainSlots[i], scene.Hud.InventorySlots[i], false);
+        }
+
+        var hotbarLabel = "HOTBAR";
+        var hotbarLabelY = layout.HotbarSlots[0].Y - 18;
+        DrawText(commandBuffer, extent, hotbarLabel, layout.HotbarSlots[0].X, hotbarLabelY, 2, new Rgba(0.78f, 0.80f, 0.82f, 1f));
+
+        for (var i = 0; i < layout.HotbarSlots.Count; i++)
+        {
+            DrawInventorySlot(commandBuffer, extent, scene, layout.HotbarSlots[i], scene.Hotbar.Slots[i], i == scene.Hud.SelectedSlot);
+        }
+
+        if (!scene.Hud.CursorSlot.IsEmpty)
+        {
+            var mouseX = (int)scene.Hud.MousePosition.X - layout.SlotSize / 2;
+            var mouseY = (int)scene.Hud.MousePosition.Y - layout.SlotSize / 2;
+            DrawInventorySlot(
+                commandBuffer,
+                extent,
+                scene,
+                new UiRect(mouseX, mouseY, layout.SlotSize, layout.SlotSize),
+                scene.Hud.CursorSlot,
+                false);
+        }
+    }
+
+    private void DrawInventorySlot(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, UiRect bounds, HotbarSlot hotbarSlot, bool selected)
+    {
+        var frame = selected ? new Rgba(0.92f, 0.92f, 0.78f, 1f) : new Rgba(0.12f, 0.10f, 0.13f, 1f);
+        DrawRect(commandBuffer, extent, bounds.X - 2, bounds.Y - 2, bounds.Width + 4, bounds.Height + 4, frame);
+        DrawRect(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, bounds.Height, new Rgba(0.025f, 0.021f, 0.028f, 1f));
+        DrawRect(commandBuffer, extent, bounds.X + 2, bounds.Y + 2, Math.Max(1, bounds.Width - 4), Math.Max(1, bounds.Height - 4), new Rgba(0.12f, 0.12f, 0.13f, 1f));
+        if (!hotbarSlot.IsEmpty)
+        {
+            DrawHotbarBlock(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, hotbarSlot.Block, selected);
+            DrawHotbarCount(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, hotbarSlot.Count);
         }
     }
 
@@ -486,23 +735,38 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawTexturedQuad(CommandBuffer commandBuffer, Extent2D extent, UiRect clipBounds, TextureTile texture, ProjectedVertex topLeft, ProjectedVertex topRight, ProjectedVertex bottomRight, ProjectedVertex bottomLeft)
     {
+        DrawTexturedQuad(commandBuffer, extent, clipBounds, texture, topLeft, topRight, bottomRight, bottomLeft, new Vector2(0f, 0f), new Vector2(1f, 1f));
+    }
+
+    private void DrawTexturedQuad(
+        CommandBuffer commandBuffer,
+        Extent2D extent,
+        UiRect clipBounds,
+        TextureTile texture,
+        ProjectedVertex topLeft,
+        ProjectedVertex topRight,
+        ProjectedVertex bottomRight,
+        ProjectedVertex bottomLeft,
+        Vector2 uvMin,
+        Vector2 uvMax)
+    {
         DrawTexturedTriangle(
             commandBuffer,
             extent,
             clipBounds,
             texture,
-            new TexturedVertex(topLeft.Position, new Vector2(0f, 0f)),
-            new TexturedVertex(topRight.Position, new Vector2(1f, 0f)),
-            new TexturedVertex(bottomRight.Position, new Vector2(1f, 1f)));
+            new TexturedVertex(topLeft.Position, new Vector2(uvMin.X, uvMin.Y)),
+            new TexturedVertex(topRight.Position, new Vector2(uvMax.X, uvMin.Y)),
+            new TexturedVertex(bottomRight.Position, new Vector2(uvMax.X, uvMax.Y)));
 
         DrawTexturedTriangle(
             commandBuffer,
             extent,
             clipBounds,
             texture,
-            new TexturedVertex(topLeft.Position, new Vector2(0f, 0f)),
-            new TexturedVertex(bottomRight.Position, new Vector2(1f, 1f)),
-            new TexturedVertex(bottomLeft.Position, new Vector2(0f, 1f)));
+            new TexturedVertex(topLeft.Position, new Vector2(uvMin.X, uvMin.Y)),
+            new TexturedVertex(bottomRight.Position, new Vector2(uvMax.X, uvMax.Y)),
+            new TexturedVertex(bottomLeft.Position, new Vector2(uvMin.X, uvMax.Y)));
     }
 
     private void DrawTexturedTriangle(CommandBuffer commandBuffer, Extent2D extent, UiRect clipBounds, TextureTile texture, TexturedVertex a, TexturedVertex b, TexturedVertex c)
@@ -589,6 +853,52 @@ internal unsafe sealed class VulkanImmediatePreview
         return tiles;
     }
 
+    private static TextureTile LoadPlayerSkinTile()
+    {
+        using var source = PlayerSkinStore.LoadAppliedSkin() ?? LoadEmbeddedPlayerSkin();
+        source.Mutate(context => context.Resize(new ResizeOptions
+        {
+            Size = new SixLabors.ImageSharp.Size(BlockTextureAtlas.PlayerSkinWidth, BlockTextureAtlas.PlayerSkinHeight),
+            Sampler = KnownResamplers.NearestNeighbor
+        }));
+
+        var pixels = new Rgba32[BlockTextureAtlas.PlayerSkinWidth * BlockTextureAtlas.PlayerSkinHeight];
+        source.CopyPixelDataTo(pixels);
+        return new TextureTile(BlockTextureAtlas.PlayerSkinWidth, BlockTextureAtlas.PlayerSkinHeight, pixels);
+    }
+
+    private static string ResolveAssetPath(string relativePath)
+    {
+        var preferred = Path.Combine(AppContext.BaseDirectory, "Assets", relativePath);
+        if (File.Exists(preferred))
+        {
+            return preferred;
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "assets", relativePath);
+    }
+
+    private static SixLabors.ImageSharp.Image<Rgba32> LoadEmbeddedPlayerSkin()
+    {
+        var modelPath = Path.Combine(AppContext.BaseDirectory, "Assets", "models", "playermodel.gltf");
+        if (!File.Exists(modelPath))
+        {
+            modelPath = Path.Combine(AppContext.BaseDirectory, "assets", "models", "playermodel.gltf");
+        }
+
+        var file = File.ReadAllText(modelPath);
+        var marker = "\"uri\":\"data:image/png;base64,";
+        var markerIndex = file.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            throw new InvalidOperationException("Player skin image was not found in playermodel.gltf.");
+        }
+
+        var startIndex = markerIndex + marker.Length;
+        var endIndex = file.IndexOf('"', startIndex);
+        return ImageSharpImage.Load<Rgba32>(Convert.FromBase64String(file[startIndex..endIndex]));
+    }
+
     private void DrawHeldBlockViewModel(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
     {
         var block = scene.Hud.SelectedBlock;
@@ -668,6 +978,114 @@ internal unsafe sealed class VulkanImmediatePreview
         };
 
         _vk.CmdClearAttachments(commandBuffer, 1, &attachment, 1, &rect);
+    }
+
+    private void DrawOutlinedPanel(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, Rgba borderColor, Rgba fillColor)
+    {
+        DrawRect(commandBuffer, extent, bounds.X - 4, bounds.Y - 4, bounds.Width + 8, bounds.Height + 8, new Rgba(0.04f, 0.02f, 0.06f, 0.94f));
+        DrawRect(commandBuffer, extent, bounds.X - 1, bounds.Y - 1, bounds.Width + 2, bounds.Height + 2, borderColor);
+        DrawRect(commandBuffer, extent, bounds.X, bounds.Y, bounds.Width, bounds.Height, fillColor);
+        DrawRect(commandBuffer, extent, bounds.X + 1, bounds.Y + 1, bounds.Width - 2, 1, new Rgba(0.20f, 0.12f, 0.24f, 1f));
+        DrawRect(commandBuffer, extent, bounds.X + 1, bounds.Bottom - 2, bounds.Width - 2, 1, new Rgba(0.02f, 0.01f, 0.04f, 1f));
+    }
+
+    private void DrawTextureContain(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, TextureTile texture)
+    {
+        var textureAspect = texture.Width / (float)texture.Height;
+        var boundsAspect = bounds.Width / (float)bounds.Height;
+        int drawWidth;
+        int drawHeight;
+        int drawX;
+        int drawY;
+
+        if (textureAspect > boundsAspect)
+        {
+            drawWidth = bounds.Width;
+            drawHeight = (int)MathF.Round(drawWidth / textureAspect);
+            drawX = bounds.X;
+            drawY = bounds.Y + (bounds.Height - drawHeight) / 2;
+        }
+        else
+        {
+            drawHeight = bounds.Height;
+            drawWidth = (int)MathF.Round(drawHeight * textureAspect);
+            drawX = bounds.X + (bounds.Width - drawWidth) / 2;
+            drawY = bounds.Y;
+        }
+
+        DrawTexturedQuad(
+            commandBuffer,
+            extent,
+            new UiRect(drawX, drawY, drawWidth, drawHeight),
+            texture,
+            new ProjectedVertex(new Vector2(drawX, drawY), 0f),
+            new ProjectedVertex(new Vector2(drawX + drawWidth, drawY), 0f),
+            new ProjectedVertex(new Vector2(drawX + drawWidth, drawY + drawHeight), 0f),
+            new ProjectedVertex(new Vector2(drawX, drawY + drawHeight), 0f));
+    }
+
+    private void DrawTextureCover(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, TextureTile texture)
+    {
+        var textureAspect = texture.Width / (float)texture.Height;
+        var boundsAspect = bounds.Width / (float)bounds.Height;
+        var uvMin = Vector2.Zero;
+        var uvMax = Vector2.One;
+
+        if (textureAspect > boundsAspect)
+        {
+            var visibleWidth = boundsAspect / textureAspect;
+            var inset = (1f - visibleWidth) * 0.5f;
+            uvMin.X = inset;
+            uvMax.X = 1f - inset;
+        }
+        else
+        {
+            var visibleHeight = textureAspect / boundsAspect;
+            var inset = (1f - visibleHeight) * 0.5f;
+            uvMin.Y = inset;
+            uvMax.Y = 1f - inset;
+        }
+
+        DrawTexturedQuad(
+            commandBuffer,
+            extent,
+            bounds,
+            texture,
+            new ProjectedVertex(new Vector2(bounds.X, bounds.Y), 0f),
+            new ProjectedVertex(new Vector2(bounds.Right, bounds.Y), 0f),
+            new ProjectedVertex(new Vector2(bounds.Right, bounds.Bottom), 0f),
+            new ProjectedVertex(new Vector2(bounds.X, bounds.Bottom), 0f),
+            uvMin,
+            uvMax);
+    }
+
+
+    private void DrawDiamond(CommandBuffer commandBuffer, Extent2D extent, int centerX, int centerY, int radius, Rgba color)
+    {
+        for (var offsetY = -radius; offsetY <= radius; offsetY++)
+        {
+            var rowRadius = radius - Math.Abs(offsetY);
+            DrawRect(commandBuffer, extent, centerX - rowRadius, centerY + offsetY, rowRadius * 2 + 1, 1, color);
+        }
+    }
+
+    private void DrawCornerRunes(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, Rgba color, int size)
+    {
+        DrawDiamond(commandBuffer, extent, bounds.X, bounds.Y, size / 2, color);
+        DrawDiamond(commandBuffer, extent, bounds.Right, bounds.Y, size / 2, color);
+        DrawDiamond(commandBuffer, extent, bounds.X, bounds.Bottom, size / 2, color);
+        DrawDiamond(commandBuffer, extent, bounds.Right, bounds.Bottom, size / 2, color);
+    }
+
+    private void DrawMagicRing(CommandBuffer commandBuffer, Extent2D extent, Vector2 center, int radius, Rgba color)
+    {
+        for (var step = 0; step < 64; step++)
+        {
+            var angle = step / 64f * MathF.Tau;
+            var px = (int)MathF.Round(center.X + MathF.Cos(angle) * radius);
+            var py = (int)MathF.Round(center.Y + MathF.Sin(angle) * (radius * 0.34f));
+            DrawRect(commandBuffer, extent, px, py, 2, 2, color);
+        }
     }
 
     private void DrawText(CommandBuffer commandBuffer, Extent2D extent, string text, int x, int y, int scale, Rgba color)
@@ -890,4 +1308,5 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private readonly record struct ProjectedVertex(Vector2 Position, float Depth);
     private readonly record struct TexturedVertex(Vector2 Position, Vector2 Uv);
+    private readonly record struct ProjectedTexturedTriangle(TexturedVertex A, TexturedVertex B, TexturedVertex C, float Depth);
 }

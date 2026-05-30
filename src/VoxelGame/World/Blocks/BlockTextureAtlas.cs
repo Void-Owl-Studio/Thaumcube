@@ -21,7 +21,10 @@ public static class BlockTextureAtlas
     public const int OakLeaves = 12;
     public const int DestroyStageStart = 13;
     public const int WaterEdge = 23;
-    public const int TextureCount = 24;
+    public const int PlayerWhite = 24;
+    public const int TextureCount = 25;
+    public const int PlayerSkinWidth = 64;
+    public const int PlayerSkinHeight = 64;
 
     public const int PaddedTileSize = TileSize + TilePadding * 2;
 
@@ -29,7 +32,11 @@ public static class BlockTextureAtlas
 
     public static int GetAtlasRows() => (TextureCount + TilesPerRow - 1) / TilesPerRow;
 
-    public static int GetAtlasWidth() => TilesPerRow * PaddedTileSize;
+    public static int GetBlockAtlasWidth() => TilesPerRow * PaddedTileSize;
 
-    public static int GetAtlasHeight() => GetAtlasRows() * PaddedTileSize;
+    public static int GetBlockAtlasHeight() => GetAtlasRows() * PaddedTileSize;
+
+    public static int GetAtlasWidth() => Math.Max(GetBlockAtlasWidth(), PlayerSkinWidth);
+
+    public static int GetAtlasHeight() => GetBlockAtlasHeight() + PlayerSkinHeight;
 }

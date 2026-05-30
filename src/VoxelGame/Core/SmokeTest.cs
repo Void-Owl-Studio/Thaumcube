@@ -90,6 +90,13 @@ public static class SmokeTest
                 return 1;
             }
 
+            var playerMeshes = resumedPlayer.BuildRenderMeshes().ToArray();
+            if (playerMeshes.Length == 0 || playerMeshes[0].Vertices.Length == 0 || playerMeshes[0].Indices.Length == 0)
+            {
+                Console.Error.WriteLine("Expected player model asset to build a visible render mesh.");
+                return 1;
+            }
+
             Console.WriteLine($"Smoke OK: spawn={spawn}, chunks={world.LoadedChunkCount}, meshes={world.VisibleMeshCount}, ground={ground}, world={saveStore.Name}");
             return 0;
         }

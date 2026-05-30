@@ -21,6 +21,8 @@ public sealed class InputManager : IDisposable
         Key.Right,
         Key.Enter,
         Key.Backspace,
+        Key.E,
+        Key.T,
         Key.Number1,
         Key.Number2,
         Key.Number3,
@@ -51,6 +53,8 @@ public sealed class InputManager : IDisposable
     public bool RightPressedThisFrame { get; private set; }
     public bool PlacePressedThisFrame { get; private set; }
     public bool BackspacePressedThisFrame { get; private set; }
+    public bool InventoryPressedThisFrame { get; private set; }
+    public bool ThirdPersonPressedThisFrame { get; private set; }
     public string TypedText { get; private set; } = string.Empty;
     public Vector2 MousePosition { get; private set; }
     public Vector2 MouseDelta { get; private set; }
@@ -82,6 +86,8 @@ public sealed class InputManager : IDisposable
         LeftPressedThisFrame = false;
         RightPressedThisFrame = false;
         BackspacePressedThisFrame = false;
+        InventoryPressedThisFrame = false;
+        ThirdPersonPressedThisFrame = false;
         MouseDelta = default;
         TypedText = string.Empty;
         ScrollDeltaY = _scrollDeltaY;
@@ -103,6 +109,8 @@ public sealed class InputManager : IDisposable
 
         ExitRequested = IsKeyPressedThisFrame(Key.Escape);
         BackspacePressedThisFrame = IsKeyPressedThisFrame(Key.Backspace);
+        InventoryPressedThisFrame = IsKeyPressedThisFrame(Key.E);
+        ThirdPersonPressedThisFrame = IsKeyPressedThisFrame(Key.T);
         if (_typedCharacters.Count > 0)
         {
             TypedText = new string(_typedCharacters.ToArray());

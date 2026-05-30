@@ -12,14 +12,16 @@ public readonly struct VoxelVertex
     public readonly Vector2 Uv;
     public readonly uint BlockId;
     public readonly Vector3 Tint;
+    public readonly float Alpha;
 
-    public VoxelVertex(Vector3 position, Vector3 normal, Vector2 uv, uint blockId, Vector3 tint)
+    public VoxelVertex(Vector3 position, Vector3 normal, Vector2 uv, uint blockId, Vector3 tint, float alpha = 1f)
     {
         Position = position;
         Normal = normal;
         Uv = uv;
         BlockId = blockId;
         Tint = tint;
+        Alpha = alpha;
     }
 }
 

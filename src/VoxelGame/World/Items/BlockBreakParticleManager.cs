@@ -1,4 +1,5 @@
 using System.Numerics;
+using VoxelGame.Rendering.Sprites;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 
@@ -6,8 +7,8 @@ namespace VoxelGame.World.Items;
 
 public sealed class BlockBreakParticleManager
 {
-    private const int ParticlesPerBreak = 12;
-    private const float ParticleLifetimeSeconds = 0.45f;
+    private const int ParticlesPerBreak = 14;
+    private const float ParticleLifetimeSeconds = 0.5f;
     private readonly List<BlockBreakParticle> _particles = [];
     private readonly BlockRegistry _blocks;
     private int _nextId;
@@ -30,17 +31,16 @@ public sealed class BlockBreakParticleManager
         for (var i = 0; i < ParticlesPerBreak; i++)
         {
             var spawnPosition = blockMin + new Vector3(
-                0.15f + (float)random.NextDouble() * 0.7f,
-                0.15f + (float)random.NextDouble() * 0.7f,
-                0.15f + (float)random.NextDouble() * 0.7f);
+                0.12f + (float)random.NextDouble() * 0.76f,
+                0.12f + (float)random.NextDouble() * 0.76f,
+                0.12f + (float)random.NextDouble() * 0.76f);
             var horizontal = new Vector3(
-                ((float)random.NextDouble() - 0.5f) * 2.6f,
+                ((float)random.NextDouble() - 0.5f) * 3.6f,
                 0f,
-                ((float)random.NextDouble() - 0.5f) * 2.6f);
-            var velocity = horizontal + new Vector3(0f, 1.4f + (float)random.NextDouble() * 2.2f, 0f);
-            var size = 0.08f + (float)random.NextDouble() * 0.08f;
-            var spin = ((float)random.NextDouble() - 0.5f) * 10f;
-            var textureWindow = 0.2f + (float)random.NextDouble() * 0.2f;
+                ((float)random.NextDouble() - 0.5f) * 3.6f);
+            var velocity = horizontal + new Vector3(0f, 1.5f + (float)random.NextDouble() * 2.1f, 0f);
+            var size = 0.11f + (float)random.NextDouble() * 0.05f;
+            var textureWindow = 0.22f + (float)random.NextDouble() * 0.12f;
             var uvMin = new Vector2(
                 (float)random.NextDouble() * (1f - textureWindow),
                 (float)random.NextDouble() * (1f - textureWindow));
@@ -52,7 +52,6 @@ public sealed class BlockBreakParticleManager
                 spawnPosition,
                 velocity,
                 size,
-                spin,
                 uvMin,
                 uvMax));
         }
@@ -70,29 +69,27 @@ public sealed class BlockBreakParticleManager
                 continue;
             }
 
-            particle.Velocity += new Vector3(0f, -8.5f * dt, 0f);
-            particle.RotationRadians += particle.SpinRadiansPerSecond * dt;
-
-            particle.Velocity *= MathF.Pow(0.92f, dt * 60f);
+            particle.Velocity += new Vector3(0f, -10.5f * dt, 0f);
+            particle.Velocity *= MathF.Pow(0.9f, dt * 60f);
             particle.Position += particle.Velocity * dt;
         }
     }
 
-    public IEnumerable<ChunkRenderMesh> BuildRenderMeshes()
+    public IEnumerable<WorldSprite> BuildSprites()
     {
         foreach (var particle in _particles)
         {
             var lifetime = Math.Clamp(1f - particle.AgeSeconds / ParticleLifetimeSeconds, 0f, 1f);
-            var size = particle.Size * (0.75f + lifetime * 0.25f);
-            yield return ChunkMeshBuilder.BuildDroppedBlockMesh(
-                $"break-particle:{particle.Id}",
+            var size = particle.Size * (0.65f + lifetime * 0.35f);
+            yield return new WorldSprite(
                 particle.Position,
                 size,
-                particle.RotationRadians,
                 particle.Block,
-                _blocks,
+                _blocks.GetFaceTextureIndex(particle.Block, Vector3.UnitY),
                 particle.UvMin,
-                particle.UvMax);
+                particle.UvMax,
+                ChunkMeshBuilder.ResolveBillboardTint(particle.Block),
+                lifetime);
         }
     }
 
@@ -105,18 +102,15 @@ public sealed class BlockBreakParticleManager
         public Vector3 Position { get; set; }
         public Vector3 Velocity { get; set; }
         public float Size { get; }
-        public float SpinRadiansPerSecond { get; }
-        public float RotationRadians { get; set; }
         public float AgeSeconds { get; set; }
 
-        public BlockBreakParticle(int id, BlockType block, Vector3 position, Vector3 velocity, float size, float spinRadiansPerSecond, Vector2 uvMin, Vector2 uvMax)
+        public BlockBreakParticle(int id, BlockType block, Vector3 position, Vector3 velocity, float size, Vector2 uvMin, Vector2 uvMax)
         {
             Id = id;
             Block = block;
             Position = position;
             Velocity = velocity;
             Size = size;
-            SpinRadiansPerSecond = spinRadiansPerSecond;
             UvMin = uvMin;
             UvMax = uvMax;
         }

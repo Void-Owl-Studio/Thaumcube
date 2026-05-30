@@ -4,6 +4,7 @@ using Silk.NET.Windowing;
 using VoxelGame.Input;
 using VoxelGame.Player;
 using VoxelGame.Rendering;
+using VoxelGame.Rendering.Sprites;
 using VoxelGame.Rendering.Vulkan;
 using VoxelGame.World;
 using VoxelGame.World.Blocks;
@@ -15,6 +16,7 @@ namespace VoxelGame.Core;
 
 public sealed class GameApplication : IDisposable
 {
+    private readonly object _asyncOperationLock = new();
     private readonly GameSettings _settings = new();
     private readonly IWindow _window;
     private readonly InputManager _input = new();
@@ -42,16 +44,29 @@ public sealed class GameApplication : IDisposable
     private int _createWorldActionIndex;
     private string _newWorldName = string.Empty;
     private string _menuStatusText = string.Empty;
+    private string _busyTitle = string.Empty;
+    private string _busyStatusText = string.Empty;
+    private string? _pendingPlayerSkinPath;
+    private PlayerBodyType _playerBodyType = PlayerSkinStore.LoadBodyType();
     private MenuScreen _settingsBackScreen = MenuScreen.Main;
     private VoxelRaycastHit? _currentBreakTarget;
     private float _breakProgressSeconds;
     private double _runningSeconds;
     private bool _disposedRuntime;
+    private bool _closeRequestedAfterSave;
+    private bool _showInventory;
+    private float _busyProgress;
+    private Task<LoadedGameSession>? _pendingLoadTask;
+    private Task? _pendingSaveTask;
+    private CameraViewMode _cameraMode = CameraViewMode.FirstPerson;
     private const float BlockBreakSeconds = 0.65f;
     private const float MaxGameplayDeltaSeconds = 1f / 15f;
     private const int MainMenuSingleplayerIndex = 0;
     private const int MainMenuSettingsIndex = 1;
-    private const int MainMenuExitIndex = 2;
+    private const int MainMenuBodyTypeIndex = 2;
+    private const int MainMenuLoadSkinIndex = 3;
+    private const int MainMenuApplySkinIndex = 4;
+    private const int MainMenuExitIndex = 5;
     private const int PauseMenuSettingsIndex = 0;
     private const int PauseMenuExitToMainMenuIndex = 1;
     private const int SingleplayerCreateIndex = 0;
@@ -104,7 +119,15 @@ public sealed class GameApplication : IDisposable
 
         if (_autoCloseAfterSeconds is { } closeAfter && _runningSeconds >= closeAfter)
         {
-            _window.Close();
+            RequestApplicationClose();
+            return;
+        }
+
+        AdvanceAsyncOperations();
+
+        if (_mode is GameMode.LoadingWorld or GameMode.SavingWorld)
+        {
+            UpdateHud();
             return;
         }
 
@@ -113,6 +136,21 @@ public sealed class GameApplication : IDisposable
             UpdateMenu();
             UpdateHud();
             return;
+        }
+
+        if (_input.InventoryPressedThisFrame)
+        {
+            ToggleInventory();
+        }
+
+        if (_input.ThirdPersonPressedThisFrame && !_showInventory)
+        {
+            _cameraMode = NextCameraMode(_cameraMode);
+        }
+
+        if (_showInventory && _input.ExitRequested)
+        {
+            ToggleInventory(forceState: false);
         }
 
         if (_input.ExitRequested)
@@ -138,10 +176,18 @@ public sealed class GameApplication : IDisposable
             ResetBreaking();
         }
 
-        _player.Update(gameplayDt, _input);
-        _world.LoadAround(_player.Position);
+        _player.Update(gameplayDt, _input, allowLook: !_showInventory);
+        _world.ReportPlayerPosition(_player.Position);
 
-        HandleBlockInteraction(gameplayDt);
+        if (_showInventory)
+        {
+            HandleInventoryInteraction();
+        }
+        else
+        {
+            HandleBlockInteraction(gameplayDt);
+        }
+
         _drops.Update(gameplayDt, _player.Position, _hotbar);
         _blockParticles.Update(gameplayDt);
 
@@ -181,12 +227,12 @@ public sealed class GameApplication : IDisposable
 
         if (_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
         {
-            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + 2) % 3;
+            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + MainMenuExitIndex) % (MainMenuExitIndex + 1);
         }
 
         if (_input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S))
         {
-            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + 1) % 3;
+            _mainMenuSelectedIndex = (_mainMenuSelectedIndex + 1) % (MainMenuExitIndex + 1);
         }
 
         if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
@@ -201,7 +247,7 @@ public sealed class GameApplication : IDisposable
 
         if (_input.ExitRequested)
         {
-            _window.Close();
+            RequestApplicationClose();
         }
     }
 
@@ -424,6 +470,24 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
+        if (menuIndex == MainMenuBodyTypeIndex)
+        {
+            TogglePlayerBodyType();
+            return;
+        }
+
+        if (menuIndex == MainMenuLoadSkinIndex)
+        {
+            PickPlayerSkinFromMenu();
+            return;
+        }
+
+        if (menuIndex == MainMenuApplySkinIndex)
+        {
+            ApplyPendingPlayerSkin();
+            return;
+        }
+
         _window.Close();
     }
 
@@ -472,40 +536,6 @@ public sealed class GameApplication : IDisposable
         OpenSingleplayerMenu();
     }
 
-    private void StartGame(WorldSaveStore worldStore)
-    {
-        _hotbar.Clear();
-        _activeWorldStore = worldStore;
-        _world = new VoxelWorld(worldStore.Metadata.Seed, _selectedRenderDistance, worldStore);
-        _player = new FirstPersonPlayer(_world, _settings.MouseSensitivity);
-        _drops = new DroppedBlockManager(_world);
-        _blockParticles = new BlockBreakParticleManager(_world);
-
-        var playerSave = worldStore.LoadPlayer();
-        if (playerSave is not null)
-        {
-            var safePosition = _world.EnsureSafeSpawnPosition(playerSave.Position);
-            _world.LoadAround(safePosition, immediate: true);
-            _world.RebuildDirtyMeshes(immediate: true);
-            _player.SpawnAt(safePosition, playerSave.YawDegrees, playerSave.PitchDegrees);
-        }
-        else
-        {
-            var spawn = _world.FindSpawnPosition(0, 0);
-            _world.LoadAround(spawn, immediate: true);
-            _world.RebuildDirtyMeshes(immediate: true);
-            _player.SpawnAt(spawn);
-        }
-
-        _world.LoadAround(_player.Position, immediate: true);
-        _world.RebuildDirtyMeshes(immediate: true);
-        worldStore.Touch();
-
-        _mode = GameMode.Playing;
-        _input.SetCursorCaptured(true);
-        ResetBreaking();
-    }
-
     private void HandleBlockInteraction(float dt)
     {
         if (_world is null || _player is null || _drops is null || _blockParticles is null)
@@ -513,7 +543,9 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
-        var ray = _player.CreateLookRay();
+        _player.SetBreakingBlock(false);
+        var aimCamera = _player.Camera;
+        var ray = _player.CreateLookRay(aimCamera);
         var hit = VoxelRaycaster.Raycast(_world, ray, 6.0f);
 
         _hud.TargetedBlock = hit?.BlockType ?? BlockType.Air;
@@ -527,6 +559,7 @@ public sealed class GameApplication : IDisposable
 
         if (_input.BreakHeld && hit.Value.BlockType != BlockType.Air)
         {
+            _player.SetBreakingBlock(true);
             if (_currentBreakTarget?.BlockPosition != hit.Value.BlockPosition)
             {
                 _currentBreakTarget = hit.Value;
@@ -542,7 +575,7 @@ public sealed class GameApplication : IDisposable
                 var brokenBlock = hit.Value.BlockType;
                 _world.SetBlock(blockPosition.X, blockPosition.Y, blockPosition.Z, BlockType.Air);
                 _blockParticles.Spawn(brokenBlock, blockPosition);
-                _drops.Spawn(brokenBlock, blockPosition, _player.Camera.Forward * 1.6f + new System.Numerics.Vector3(0, 2.2f, 0));
+                _drops.Spawn(brokenBlock, blockPosition, aimCamera.Forward * 1.6f + new System.Numerics.Vector3(0, 2.2f, 0));
                 ResetBreaking();
             }
         }
@@ -565,14 +598,15 @@ public sealed class GameApplication : IDisposable
 
     private void OnRender(double deltaSeconds)
     {
-        var meshes = BuildSceneMeshes();
-        var camera = _player?.Camera ?? new CameraState(new System.Numerics.Vector3(0, 64, -4), 0, 0);
+        var camera = _player?.GetCamera(_cameraMode) ?? new CameraState(new System.Numerics.Vector3(0, 64, -4), 0, 0);
+        var meshes = BuildSceneMeshes(camera);
+        var sprites = BuildSceneSprites();
         var renderDistance = _world?.RenderDistanceChunks ?? _selectedRenderDistance;
-        var scene = new RenderScene(meshes, camera, _hotbar, _hud, renderDistance, (float)_runningSeconds);
+        var scene = new RenderScene(meshes, sprites, camera, _hotbar, _hud, renderDistance, (float)_runningSeconds);
         _renderer.Render(scene);
     }
 
-    private IEnumerable<ChunkRenderMesh> BuildSceneMeshes()
+    private IEnumerable<ChunkRenderMesh> BuildSceneMeshes(CameraState camera)
     {
         if (_world is null)
         {
@@ -586,9 +620,9 @@ public sealed class GameApplication : IDisposable
             meshes.AddRange(_drops.BuildRenderMeshes());
         }
 
-        if (_blockParticles is not null)
+        if (_player is not null && _cameraMode != CameraViewMode.FirstPerson)
         {
-            meshes.AddRange(_blockParticles.BuildRenderMeshes());
+            meshes.AddRange(_player.BuildRenderMeshes(hideHeadForFirstPerson: false));
         }
 
         if (_currentBreakTarget is { } breakTarget && _hud.BreakProgress > 0f)
@@ -599,10 +633,21 @@ public sealed class GameApplication : IDisposable
 
         if (_player is not null)
         {
-            meshes.AddRange(SkyMeshBuilder.Build(_player.Camera, _settings));
+            meshes.AddRange(SkyMeshBuilder.Build(camera, _settings, (float)_runningSeconds));
         }
 
         return meshes;
+    }
+
+    private IEnumerable<WorldSprite> BuildSceneSprites()
+    {
+        if (_blockParticles is not null)
+        {
+            foreach (var sprite in _blockParticles.BuildSprites())
+            {
+                yield return sprite;
+            }
+        }
     }
 
     private void UpdateHud()
@@ -612,9 +657,11 @@ public sealed class GameApplication : IDisposable
         _hud.CurrentBiome = ResolveCurrentBiomeName();
         _hud.SelectedSlot = _hotbar.SelectedIndex;
         _hud.SelectedBlock = _hotbar.SelectedBlock;
+        _hud.MousePosition = _input.MousePosition;
         _hud.LoadedChunks = _world?.LoadedChunkCount ?? 0;
         _hud.VisibleChunkMeshes = _world?.VisibleMeshCount ?? 0;
         _hud.ShowMenu = _mode != GameMode.Playing;
+        _hud.ShowInventory = _showInventory && _mode == GameMode.Playing;
         _hud.ShowPauseOverlay = _mode == GameMode.Paused;
         _hud.MenuScreen = _menuScreen;
         _hud.MainMenuSelectedIndex = _mainMenuSelectedIndex;
@@ -645,12 +692,40 @@ public sealed class GameApplication : IDisposable
             _ => string.Empty
         };
         _hud.MenuStatusText = _menuStatusText;
+        _hud.MenuSkinText = BuildMenuSkinText();
+        _hud.MenuSkinReadyToApply = !string.IsNullOrWhiteSpace(_pendingPlayerSkinPath);
+        _hud.MenuPlayerBodyType = _playerBodyType;
         _hud.CreateWorldName = _newWorldName;
         _hud.MenuWorldNames = GetVisibleWorldNames();
+        _hud.InventorySlots = _hotbar.InventorySlots;
+        _hud.CursorSlot = _hotbar.CursorSlot;
         _hud.MenuRenderDistance = _selectedRenderDistance;
         _hud.MenuSelectedWorldIndex = _selectedWorldIndex < _worldListScrollOffset
             ? -1
             : _selectedWorldIndex - _worldListScrollOffset;
+        _hud.ShowBusyOverlay = _mode is GameMode.LoadingWorld or GameMode.SavingWorld;
+        _hud.BusyTitle = _busyTitle;
+        _hud.BusyStatusText = _busyStatusText;
+        _hud.BusyProgress = _busyProgress;
+    }
+
+    private void HandleInventoryInteraction()
+    {
+        if (!_input.LeftPressedThisFrame)
+        {
+            return;
+        }
+
+        var hit = HudLayout.HitTestInventory(_input.MousePosition, _window.Size.X, _window.Size.Y);
+        switch (hit.Area)
+        {
+            case InventoryArea.Main:
+                _hotbar.InteractWithInventorySlot(hit.Index);
+                break;
+            case InventoryArea.Hotbar:
+                _hotbar.InteractWithHotbarSlot(hit.Index);
+                break;
+        }
     }
 
     private string ResolveCurrentBiomeName()
@@ -763,7 +838,7 @@ public sealed class GameApplication : IDisposable
 
         try
         {
-            StartGame(WorldSaveStore.Open(_settings.WorldsRootPath, world.Name));
+            BeginWorldLoad(() => WorldSaveStore.Open(_settings.WorldsRootPath, world.Name), "LOADING WORLD");
         }
         catch (Exception)
         {
@@ -822,7 +897,7 @@ public sealed class GameApplication : IDisposable
 
         try
         {
-            StartGame(WorldSaveStore.CreateNew(_settings.WorldsRootPath, worldName, _settings.WorldSeed));
+            BeginWorldLoad(() => WorldSaveStore.CreateNew(_settings.WorldsRootPath, worldName, _settings.WorldSeed), "CREATING WORLD");
         }
         catch (Exception)
         {
@@ -833,18 +908,7 @@ public sealed class GameApplication : IDisposable
 
     private void ReturnToMainMenu()
     {
-        SaveActiveWorld();
-        _activeWorldStore = null;
-        _world = null;
-        _player = null;
-        _drops = null;
-        _blockParticles = null;
-        _hotbar.Clear();
-        _mode = GameMode.MainMenu;
-        _input.SetCursorCaptured(false);
-        ResetBreaking();
-        OpenMainMenu();
-        RefreshWorldCatalog();
+        BeginWorldSave(closeAfterSave: false);
     }
 
     private void PauseGame()
@@ -854,6 +918,7 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
+        _showInventory = false;
         _mode = GameMode.Paused;
         _input.SetCursorCaptured(false);
         ResetBreaking();
@@ -868,9 +933,21 @@ public sealed class GameApplication : IDisposable
         }
 
         _mode = GameMode.Playing;
-        _input.SetCursorCaptured(true);
+        _input.SetCursorCaptured(!_showInventory);
         ResetBreaking();
         ClearMenuStatus();
+    }
+
+    private void ToggleInventory(bool? forceState = null)
+    {
+        if (_mode != GameMode.Playing)
+        {
+            return;
+        }
+
+        _showInventory = forceState ?? !_showInventory;
+        _input.SetCursorCaptured(!_showInventory);
+        ResetBreaking();
     }
 
     private void SaveActiveWorld()
@@ -885,6 +962,210 @@ public sealed class GameApplication : IDisposable
         {
             _activeWorldStore.SavePlayer(_player.CreateSaveData());
         }
+    }
+
+    private void BeginWorldLoad(Func<WorldSaveStore> worldStoreFactory, string title)
+    {
+        if (_pendingLoadTask is not null || _pendingSaveTask is not null)
+        {
+            return;
+        }
+
+        _hotbar.Clear();
+        _showInventory = false;
+        _cameraMode = CameraViewMode.FirstPerson;
+        _input.SetCursorCaptured(false);
+        ResetBreaking();
+        SetBusyState(title, "PREPARING WORLD...", 0.02f);
+        _mode = GameMode.LoadingWorld;
+        _pendingLoadTask = Task.Run(() => LoadGameSession(worldStoreFactory));
+    }
+
+    private LoadedGameSession LoadGameSession(Func<WorldSaveStore> worldStoreFactory)
+    {
+        SetBusyState(_busyTitle, "OPENING SAVE...", 0.08f);
+        var worldStore = worldStoreFactory();
+        var world = new VoxelWorld(worldStore.Metadata.Seed, _selectedRenderDistance, worldStore);
+        var player = new FirstPersonPlayer(world, _settings.MouseSensitivity, _playerBodyType);
+        var drops = new DroppedBlockManager(world);
+        var particles = new BlockBreakParticleManager(world);
+
+        SetBusyState(_busyTitle, "READING PLAYER DATA...", 0.16f);
+        var playerSave = worldStore.LoadPlayer();
+        if (playerSave is not null)
+        {
+            var safePosition = world.EnsureSafeSpawnPosition(playerSave.Position, (loaded, total) => UpdateBusyProgress("STREAMING CHUNKS...", loaded, total, 0.16f, 0.72f));
+            world.RebuildDirtyMeshes((built, total) => UpdateBusyProgress("BUILDING MESHES...", built, total, 0.72f, 0.96f));
+            player.SpawnAt(safePosition, playerSave.YawDegrees, playerSave.PitchDegrees);
+        }
+        else
+        {
+            SetBusyState(_busyTitle, "FINDING SPAWN...", 0.22f);
+            var spawn = world.FindSpawnPosition(0, 0, (loaded, total) => UpdateBusyProgress("STREAMING CHUNKS...", loaded, total, 0.22f, 0.72f));
+            world.RebuildDirtyMeshes((built, total) => UpdateBusyProgress("BUILDING MESHES...", built, total, 0.72f, 0.96f));
+            player.SpawnAt(spawn);
+        }
+
+        worldStore.Touch();
+        SetBusyState(_busyTitle, "FINALIZING...", 1f);
+        return new LoadedGameSession(worldStore, world, player, drops, particles);
+    }
+
+    private void BeginWorldSave(bool closeAfterSave)
+    {
+        if (_pendingSaveTask is not null || _pendingLoadTask is not null)
+        {
+            return;
+        }
+
+        if (_activeWorldStore is null || _world is null)
+        {
+            if (closeAfterSave)
+            {
+                _window.Close();
+            }
+            else
+            {
+                FinishReturnToMainMenu();
+            }
+
+            return;
+        }
+
+        var world = _world;
+        var worldStore = _activeWorldStore;
+        var playerSave = _player?.CreateSaveData();
+        _closeRequestedAfterSave = closeAfterSave;
+        _showInventory = false;
+        _input.SetCursorCaptured(false);
+        ResetBreaking();
+        SetBusyState("SAVING WORLD", "WRITING CHUNKS...", 0.02f);
+        _mode = GameMode.SavingWorld;
+        _pendingSaveTask = Task.Run(() =>
+        {
+            world.SaveWorldState((saved, total) => UpdateBusyProgress("WRITING CHUNKS...", saved, total, 0.08f, 0.92f));
+            SetBusyState("SAVING WORLD", "WRITING PLAYER...", 0.96f);
+            if (playerSave is not null)
+            {
+                worldStore.SavePlayer(playerSave);
+            }
+
+            SetBusyState("SAVING WORLD", "DONE", 1f);
+        });
+    }
+
+    private void AdvanceAsyncOperations()
+    {
+        if (_pendingLoadTask is not null && _pendingLoadTask.IsCompleted)
+        {
+            try
+            {
+                ApplyLoadedSession(_pendingLoadTask.GetAwaiter().GetResult());
+                _pendingLoadTask = null;
+            }
+            catch (Exception)
+            {
+                _pendingLoadTask = null;
+                _mode = GameMode.MainMenu;
+                _menuScreen = MenuScreen.Singleplayer;
+                _menuStatusText = "FAILED TO LOAD WORLD";
+                SetBusyState(string.Empty, string.Empty, 0f);
+                RefreshWorldCatalog();
+            }
+        }
+
+        if (_pendingSaveTask is not null && _pendingSaveTask.IsCompleted)
+        {
+            try
+            {
+                _pendingSaveTask.GetAwaiter().GetResult();
+            }
+            catch (Exception)
+            {
+                _menuStatusText = "FAILED TO SAVE WORLD";
+            }
+            finally
+            {
+                _pendingSaveTask = null;
+            }
+
+            if (_closeRequestedAfterSave)
+            {
+                _activeWorldStore = null;
+                _world = null;
+                _player = null;
+                _drops = null;
+                _blockParticles = null;
+                _window.Close();
+                return;
+            }
+
+            FinishReturnToMainMenu();
+        }
+    }
+
+    private void ApplyLoadedSession(LoadedGameSession session)
+    {
+        _activeWorldStore = session.WorldStore;
+        _world = session.World;
+        _player = session.Player;
+        _drops = session.Drops;
+        _blockParticles = session.BlockParticles;
+        _mode = GameMode.Playing;
+        _input.SetCursorCaptured(true);
+        _menuStatusText = string.Empty;
+        SetBusyState(string.Empty, string.Empty, 0f);
+        ResetBreaking();
+        UpdateHud();
+    }
+
+    private void FinishReturnToMainMenu()
+    {
+        _activeWorldStore = null;
+        _world = null;
+        _player = null;
+        _drops = null;
+        _blockParticles = null;
+        _hotbar.Clear();
+        _mode = GameMode.MainMenu;
+        _cameraMode = CameraViewMode.FirstPerson;
+        _closeRequestedAfterSave = false;
+        SetBusyState(string.Empty, string.Empty, 0f);
+        OpenMainMenu();
+        RefreshWorldCatalog();
+    }
+
+    private void RequestApplicationClose()
+    {
+        if (_mode == GameMode.SavingWorld)
+        {
+            _closeRequestedAfterSave = true;
+            return;
+        }
+
+        if (_world is not null)
+        {
+            BeginWorldSave(closeAfterSave: true);
+            return;
+        }
+
+        _window.Close();
+    }
+
+    private void SetBusyState(string title, string status, float progress)
+    {
+        lock (_asyncOperationLock)
+        {
+            _busyTitle = title;
+            _busyStatusText = status;
+            _busyProgress = Math.Clamp(progress, 0f, 1f);
+        }
+    }
+
+    private void UpdateBusyProgress(string status, int completed, int total, float start, float end)
+    {
+        var progress = total <= 0 ? end : start + ((end - start) * completed / total);
+        SetBusyState(_busyTitle, status, progress);
     }
 
     private void RefreshWorldCatalog()
@@ -966,6 +1247,68 @@ public sealed class GameApplication : IDisposable
         _menuStatusText = string.Empty;
     }
 
+    private void PickPlayerSkinFromMenu()
+    {
+        var selectedPath = NativeFileDialog.PickPngFile();
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            _menuStatusText = "SKIN SELECTION CANCELED";
+            return;
+        }
+
+        _pendingPlayerSkinPath = selectedPath;
+        _menuStatusText = "SKIN SELECTED - PRESS APPLY";
+    }
+
+    private void ApplyPendingPlayerSkin()
+    {
+        if (string.IsNullOrWhiteSpace(_pendingPlayerSkinPath))
+        {
+            _menuStatusText = "LOAD A SKIN FIRST";
+            return;
+        }
+
+        if (!PlayerSkinStore.TryApplySkin(_pendingPlayerSkinPath, out var error))
+        {
+            _menuStatusText = error;
+            return;
+        }
+
+        _pendingPlayerSkinPath = null;
+        _renderer.ReloadBlockAtlas();
+        _menuStatusText = "PLAYER SKIN APPLIED";
+    }
+
+    private void TogglePlayerBodyType()
+    {
+        _playerBodyType = _playerBodyType == PlayerBodyType.Slim ? PlayerBodyType.Normal : PlayerBodyType.Slim;
+        PlayerSkinStore.SaveBodyType(_playerBodyType);
+        _player?.SetBodyType(_playerBodyType);
+        _menuStatusText = _playerBodyType == PlayerBodyType.Slim ? "SLIM BODY SELECTED" : "NORMAL BODY SELECTED";
+    }
+
+    private string BuildMenuSkinText()
+    {
+        if (!string.IsNullOrWhiteSpace(_pendingPlayerSkinPath))
+        {
+            return $"SELECTED {ShortenFileName(Path.GetFileName(_pendingPlayerSkinPath), 18)}";
+        }
+
+        return PlayerSkinStore.HasAppliedSkin ? "CUSTOM SKIN ACTIVE" : "DEFAULT SKIN";
+    }
+
+    private static string ShortenFileName(string fileName, int maxLength)
+    {
+        if (fileName.Length <= maxLength)
+        {
+            return fileName;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        var stemLength = Math.Max(4, maxLength - extension.Length - 1);
+        return $"{fileName[..Math.Min(stemLength, fileName.Length)]}~{extension}";
+    }
+
     private void OpenPauseMenu()
     {
         _menuScreen = MenuScreen.Pause;
@@ -979,10 +1322,29 @@ public sealed class GameApplication : IDisposable
         ClearMenuStatus();
     }
 
+    private static CameraViewMode NextCameraMode(CameraViewMode currentMode)
+    {
+        return currentMode switch
+        {
+            CameraViewMode.FirstPerson => CameraViewMode.ThirdPersonBack,
+            CameraViewMode.ThirdPersonBack => CameraViewMode.ThirdPersonFront,
+            _ => CameraViewMode.FirstPerson
+        };
+    }
+
     private enum GameMode
     {
         MainMenu,
         Playing,
-        Paused
+        Paused,
+        LoadingWorld,
+        SavingWorld
     }
+
+    private sealed record LoadedGameSession(
+        WorldSaveStore WorldStore,
+        VoxelWorld World,
+        FirstPersonPlayer Player,
+        DroppedBlockManager Drops,
+        BlockBreakParticleManager BlockParticles);
 }
