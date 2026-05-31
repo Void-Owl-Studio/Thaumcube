@@ -16,6 +16,9 @@ namespace VoxelGame.Core;
 
 public sealed class GameApplication : IDisposable
 {
+    private const float LeafStickDropChanceMin = 0.02f;
+    private const float LeafStickDropChanceMax = 0.05f;
+
     private readonly object _asyncOperationLock = new();
     private readonly GameSettings _settings = new();
     private readonly IWindow _window;
@@ -575,7 +578,11 @@ public sealed class GameApplication : IDisposable
                 var brokenBlock = hit.Value.BlockType;
                 _world.SetBlock(blockPosition.X, blockPosition.Y, blockPosition.Z, BlockType.Air);
                 _blockParticles.Spawn(brokenBlock, blockPosition);
-                _drops.Spawn(brokenBlock, blockPosition, aimCamera.Forward * 1.6f + new System.Numerics.Vector3(0, 2.2f, 0));
+                if (TryResolveDroppedItem(brokenBlock, out var droppedItem))
+                {
+                    _drops.Spawn(droppedItem, blockPosition, aimCamera.Forward * 1.6f + new System.Numerics.Vector3(0, 2.2f, 0));
+                }
+
                 ResetBreaking();
             }
         }
@@ -588,12 +595,39 @@ public sealed class GameApplication : IDisposable
         {
             var place = hit.Value.BlockPosition + hit.Value.FaceNormal;
             var selected = _hotbar.SelectedBlock;
-            if (selected != BlockType.Air && !_player.Body.IntersectsBlock(place.X, place.Y, place.Z))
+            if (selected != BlockType.Air &&
+                _world.Blocks.IsPlaceable(selected) &&
+                !_player.Body.IntersectsBlock(place.X, place.Y, place.Z))
             {
                 _world.SetBlock(place.X, place.Y, place.Z, selected);
                 _hotbar.TryConsumeSelected();
             }
         }
+    }
+
+    private static bool TryResolveDroppedItem(BlockType brokenBlock, out BlockType droppedItem)
+    {
+        if (brokenBlock == BlockType.OakLeaves)
+        {
+            var chance = Random.Shared.NextSingle() * (LeafStickDropChanceMax - LeafStickDropChanceMin) + LeafStickDropChanceMin;
+            if (Random.Shared.NextSingle() <= chance)
+            {
+                droppedItem = BlockType.Stick;
+                return true;
+            }
+
+            droppedItem = BlockType.Air;
+            return false;
+        }
+
+        if (brokenBlock != BlockType.Air)
+        {
+            droppedItem = brokenBlock;
+            return true;
+        }
+
+        droppedItem = BlockType.Air;
+        return false;
     }
 
     private void OnRender(double deltaSeconds)
@@ -644,6 +678,14 @@ public sealed class GameApplication : IDisposable
         if (_blockParticles is not null)
         {
             foreach (var sprite in _blockParticles.BuildSprites())
+            {
+                yield return sprite;
+            }
+        }
+
+        if (_drops is not null)
+        {
+            foreach (var sprite in _drops.BuildSprites())
             {
                 yield return sprite;
             }

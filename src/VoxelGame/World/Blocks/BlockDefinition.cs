@@ -8,6 +8,7 @@ public sealed record BlockDefinition(
     bool Solid,
     bool Transparent,
     bool Emissive,
+    bool Placeable,
     int SideTextureIndex,
     int TopTextureIndex,
     int BottomTextureIndex,

@@ -1,5 +1,6 @@
 using System.Numerics;
 using VoxelGame.Rendering;
+using VoxelGame.Rendering.Sprites;
 using VoxelGame.World.Blocks;
 using VoxelGame.World.Chunks;
 
@@ -55,6 +56,11 @@ public sealed class DroppedBlockManager
     {
         foreach (var item in _items)
         {
+            if (!_world.Blocks.IsPlaceable(item.Block))
+            {
+                continue;
+            }
+
             yield return ChunkMeshBuilder.BuildDroppedBlockMesh(
                 $"drop:{item.Id}",
                 item.Position + new Vector3(0, MathF.Sin(item.RotationRadians * 2f) * 0.06f, 0),
@@ -62,6 +68,26 @@ public sealed class DroppedBlockManager
                 item.RotationRadians,
                 item.Block,
                 _world.Blocks);
+        }
+    }
+
+    public IEnumerable<WorldSprite> BuildSprites()
+    {
+        foreach (var item in _items)
+        {
+            if (_world.Blocks.IsPlaceable(item.Block))
+            {
+                continue;
+            }
+
+            yield return new WorldSprite(
+                item.Position + new Vector3(0, MathF.Sin(item.RotationRadians * 2f) * 0.08f, 0),
+                0.42f,
+                item.Block,
+                _world.Blocks.GetFaceTextureIndex(item.Block, Vector3.UnitY),
+                Vector2.Zero,
+                Vector2.One,
+                ChunkMeshBuilder.ResolveBillboardTint(item.Block));
         }
     }
 }

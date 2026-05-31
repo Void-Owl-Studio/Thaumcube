@@ -13,5 +13,6 @@ public enum BlockType : ushort
     MagicOre = 8,
     Snow = 9,
     OakLog = 10,
-    OakLeaves = 11
+    OakLeaves = 11,
+    Stick = 12
 }

@@ -172,7 +172,7 @@ public sealed class ChunkMeshBuilder
             AddQuadIndices(indices, start);
         }
 
-        return new ChunkRenderMesh(new ChunkCoord(int.MinValue, int.MinValue), vertices, indices, key, isTransparent: block == BlockType.Water);
+        return new ChunkRenderMesh(new ChunkCoord(int.MinValue, int.MinValue), vertices, indices, key, isTransparent: blocks.IsTransparent(block));
     }
 
     public static ChunkRenderMesh BuildBillboardParticleMesh(

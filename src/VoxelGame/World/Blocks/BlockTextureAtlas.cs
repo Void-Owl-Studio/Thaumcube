@@ -20,9 +20,10 @@ public static class BlockTextureAtlas
     public const int OakLogTop = 11;
     public const int OakLeaves = 12;
     public const int DestroyStageStart = 13;
-    public const int WaterEdge = 23;
-    public const int PlayerWhite = 24;
-    public const int TextureCount = 25;
+    public const int Stick = 23;
+    public const int WaterEdge = 24;
+    public const int PlayerWhite = 25;
+    public const int TextureCount = 26;
     public const int PlayerSkinWidth = 64;
     public const int PlayerSkinHeight = 64;
 

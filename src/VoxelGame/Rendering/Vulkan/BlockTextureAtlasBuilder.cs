@@ -65,6 +65,7 @@ internal sealed class BlockTextureAtlasBuilder
             new(BlockTextureAtlas.OakLogSide, "block/oak_log.png"),
             new(BlockTextureAtlas.OakLogTop, "block/oak_log_top.png"),
             new(BlockTextureAtlas.OakLeaves, "block/oak_leaves.png"),
+            new(BlockTextureAtlas.Stick, "item/stick.png"),
             new(BlockTextureAtlas.WaterEdge, "block/water_flow.png")
         };
 

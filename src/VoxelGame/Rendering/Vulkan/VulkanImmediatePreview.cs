@@ -706,9 +706,7 @@ internal unsafe sealed class VulkanImmediatePreview
     private void DrawHotbarBlock(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int slot, BlockType block, bool selected)
     {
         var clipBounds = new UiRect(x + 2, y + 2, Math.Max(1, slot - 4), Math.Max(1, slot - 4));
-        var center = new Vector2(x + slot * 0.50f, y + slot * 0.58f);
-        var scale = Math.Clamp(slot * 0.30f, 10f, 16f);
-        DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, -0.74f, 0.60f);
+        DrawItemOrBlockPreview(commandBuffer, extent, block, clipBounds, slot, -0.74f, 0.60f);
     }
 
     private void DrawHotbarCount(CommandBuffer commandBuffer, Extent2D extent, int x, int y, int slot, int count)
@@ -909,10 +907,50 @@ internal unsafe sealed class VulkanImmediatePreview
 
         var size = Math.Clamp(width / 4, 180, 320);
         var clipBounds = new UiRect(0, 0, width, height);
-        var center = new Vector2(width * 0.5f, height * 0.58f);
-        var scale = size * 0.55f;
+        DrawHeldItemOrBlockPreview(commandBuffer, extent, block, clipBounds, width, height, size);
+    }
 
-        DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, -0.78f, 0.52f);
+    private void DrawItemOrBlockPreview(CommandBuffer commandBuffer, Extent2D extent, BlockType block, UiRect clipBounds, int slotSize, float yaw, float pitch)
+    {
+        if (_blocks.IsPlaceable(block))
+        {
+            var center = new Vector2(clipBounds.X + clipBounds.Width * 0.50f, clipBounds.Y + clipBounds.Height * 0.58f);
+            var scale = Math.Clamp(slotSize * 0.30f, 10f, 16f);
+            DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, yaw, pitch);
+            return;
+        }
+
+        DrawFlatItemPreview(commandBuffer, extent, block, clipBounds, slotSize);
+    }
+
+    private void DrawHeldItemOrBlockPreview(CommandBuffer commandBuffer, Extent2D extent, BlockType block, UiRect clipBounds, int width, int height, int size)
+    {
+        if (_blocks.IsPlaceable(block))
+        {
+            var center = new Vector2(width * 0.5f, height * 0.58f);
+            var scale = size * 0.55f;
+            DrawBlockPreview(commandBuffer, extent, block, clipBounds, center, scale, -0.78f, 0.52f);
+            return;
+        }
+
+        var itemSize = (int)(size * 0.72f);
+        var itemBounds = new UiRect(
+            (int)(width * 0.5f - itemSize * 0.5f),
+            (int)(height * 0.50f - itemSize * 0.5f),
+            itemSize,
+            itemSize);
+        DrawTextureContain(commandBuffer, extent, itemBounds, GetBlockTile(_blocks.GetFaceTextureIndex(block, Vector3.UnitY)));
+    }
+
+    private void DrawFlatItemPreview(CommandBuffer commandBuffer, Extent2D extent, BlockType block, UiRect clipBounds, int slotSize)
+    {
+        var inset = Math.Max(3, slotSize / 10);
+        var itemBounds = new UiRect(
+            clipBounds.X + inset,
+            clipBounds.Y + inset,
+            Math.Max(1, clipBounds.Width - inset * 2),
+            Math.Max(1, clipBounds.Height - inset * 2));
+        DrawTextureContain(commandBuffer, extent, itemBounds, GetBlockTile(_blocks.GetFaceTextureIndex(block, Vector3.UnitY)));
     }
 
     private void DrawBlockPreview(CommandBuffer commandBuffer, Extent2D extent, BlockType block, UiRect clipBounds, Vector2 center, float scale, float yaw, float pitch)
