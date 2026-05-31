@@ -13,23 +13,22 @@ public static class HudLayout
         var buttonWidth = Math.Clamp(width / 4, 290, 430);
         var buttonHeight = Math.Clamp(height / 20, 34, 42);
         var buttonSpacing = buttonHeight + Math.Clamp(height / 48, 12, 18);
-        var contentWidth = previewWidth + gap + buttonWidth;
-        var startX = Math.Max(28, (width - contentWidth) / 2);
-        var previewY = Math.Max(height / 3, 206);
-        var buttonsX = startX + previewWidth + gap;
-        var totalButtonHeight = buttonSpacing * 5 + buttonHeight;
-        var buttonsY = previewY + Math.Max(4, (previewHeight - totalButtonHeight) / 2);
-        var options = new[] { "SINGLEPLAYER", "SETTINGS", "BODY NORMAL", "LOAD SKIN", "APPLY SKIN", "EXIT" };
+        var previewX = Math.Max(28, width / 30);
+        var previewY = Math.Max(28, height - previewHeight - Math.Max(28, height / 18));
+        var options = new[] { "SINGLEPLAYER", "SETTINGS", "EXIT" };
+        var totalButtonHeight = buttonSpacing * (options.Length - 1) + buttonHeight;
+        var buttonsY = Math.Max(height / 3, (height - totalButtonHeight) / 2 + Math.Max(10, height / 18));
         var items = new MenuButtonLayout[options.Length];
 
         for (var i = 0; i < items.Length; i++)
         {
             var textWidth = TextWidth(options[i], scale);
             var boxWidth = Math.Max(textWidth + 56, buttonWidth);
+            var buttonsX = (width - boxWidth) / 2;
             items[i] = new MenuButtonLayout(i, new UiRect(buttonsX, buttonsY + i * buttonSpacing, boxWidth, buttonHeight));
         }
 
-        return new MainMenuLayout(scale, items, new UiRect(startX, previewY, previewWidth, previewHeight));
+        return new MainMenuLayout(scale, items, new UiRect(previewX, previewY, previewWidth, previewHeight));
     }
 
     public static MainMenuLayout BuildPauseMenu(int width, int height)
@@ -40,19 +39,26 @@ public static class HudLayout
     public static SettingsLayout BuildSettingsMenu(int width, int height)
     {
         var scale = Math.Clamp(width / 480, 2, 4);
-        var panelWidth = Math.Clamp(width / 2, 420, 700);
+        var panelWidth = Math.Clamp(width / 2, 440, 720);
         var panelX = (width - panelWidth) / 2;
         var renderBounds = new UiRect(panelX, height / 3, panelWidth, 76);
         var sliderBounds = new UiRect(panelX + 20, renderBounds.Y + 38, panelWidth - 40, 18);
-        var buttonWidth = Math.Max(140, panelWidth / 3);
+        var buttonWidth = Math.Max(200, panelWidth / 2);
         var buttonX = panelX + (panelWidth - buttonWidth) / 2;
-        var buttonY = renderBounds.Bottom + 32;
+        var buttonY = renderBounds.Bottom + 28;
+        var buttonHeight = 34;
+        var buttonGap = 14;
 
         return new SettingsLayout(
             scale,
             renderBounds,
             sliderBounds,
-            new MenuButtonLayout(0, new UiRect(buttonX, buttonY, buttonWidth, 34)));
+            [
+                new MenuButtonLayout(0, new UiRect(buttonX, buttonY, buttonWidth, buttonHeight)),
+                new MenuButtonLayout(1, new UiRect(buttonX, buttonY + (buttonHeight + buttonGap), buttonWidth, buttonHeight)),
+                new MenuButtonLayout(2, new UiRect(buttonX, buttonY + (buttonHeight + buttonGap) * 2, buttonWidth, buttonHeight)),
+                new MenuButtonLayout(3, new UiRect(buttonX, buttonY + (buttonHeight + buttonGap) * 3, buttonWidth, buttonHeight))
+            ]);
     }
 
     public static WorldSelectionLayout BuildWorldSelectionMenu(int width, int height, IReadOnlyList<string> worldNames)
@@ -213,7 +219,7 @@ public static class HudLayout
     public static int? HitTestSettingsAction(Vector2 mousePosition, int width, int height)
     {
         var layout = BuildSettingsMenu(width, height);
-        return layout.BackButton.Bounds.Contains(mousePosition) ? layout.BackButton.Index : null;
+        return HitTestButtons(mousePosition, layout.Buttons);
     }
 
     public static bool HitTestSettingsSlider(Vector2 mousePosition, int width, int height)
@@ -318,7 +324,7 @@ public readonly record struct SettingsLayout(
     int Scale,
     UiRect RenderDistanceBounds,
     UiRect SliderBounds,
-    MenuButtonLayout BackButton);
+    IReadOnlyList<MenuButtonLayout> Buttons);
 
 public readonly record struct MenuButtonLayout(int Index, UiRect Bounds);
 

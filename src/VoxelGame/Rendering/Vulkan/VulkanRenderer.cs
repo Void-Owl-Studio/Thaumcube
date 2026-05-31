@@ -1414,28 +1414,28 @@ public unsafe sealed class VulkanRenderer : IDisposable
             vertices[vertexStart + 0] = new VoxelVertex(
                 sprite.Position - halfRight - halfUp,
                 faceNormal,
-                ResolveSpriteUv(sprite, sprite.UvMin.X, sprite.UvMax.Y),
+                ResolveSpriteUv(sprite, 0f, 1f),
                 sprite.BlockId,
                 sprite.Tint,
                 sprite.Alpha);
             vertices[vertexStart + 1] = new VoxelVertex(
                 sprite.Position - halfRight + halfUp,
                 faceNormal,
-                ResolveSpriteUv(sprite, sprite.UvMin.X, sprite.UvMin.Y),
+                ResolveSpriteUv(sprite, 0f, 0f),
                 sprite.BlockId,
                 sprite.Tint,
                 sprite.Alpha);
             vertices[vertexStart + 2] = new VoxelVertex(
                 sprite.Position + halfRight + halfUp,
                 faceNormal,
-                ResolveSpriteUv(sprite, sprite.UvMax.X, sprite.UvMin.Y),
+                ResolveSpriteUv(sprite, 1f, 0f),
                 sprite.BlockId,
                 sprite.Tint,
                 sprite.Alpha);
             vertices[vertexStart + 3] = new VoxelVertex(
                 sprite.Position + halfRight - halfUp,
                 faceNormal,
-                ResolveSpriteUv(sprite, sprite.UvMax.X, sprite.UvMax.Y),
+                ResolveSpriteUv(sprite, 1f, 1f),
                 sprite.BlockId,
                 sprite.Tint,
                 sprite.Alpha);
@@ -1499,8 +1499,8 @@ public unsafe sealed class VulkanRenderer : IDisposable
             logoHeight,
             MenuLogoBlockId,
             0,
-            _menuLogoUvMin,
-            _menuLogoUvMax,
+            new Vector2(_menuLogoUvMax.X, _menuLogoUvMin.Y),
+            new Vector2(_menuLogoUvMin.X, _menuLogoUvMax.Y),
             Vector3.One,
             1f));
     }
@@ -1509,7 +1509,9 @@ public unsafe sealed class VulkanRenderer : IDisposable
     {
         if (sprite.BlockId is MenuBackgroundBlockId or MenuLogoBlockId)
         {
-            return new Vector2(localUvX, localUvY);
+            return new Vector2(
+                sprite.UvMin.X + (sprite.UvMax.X - sprite.UvMin.X) * localUvX,
+                sprite.UvMin.Y + (sprite.UvMax.Y - sprite.UvMin.Y) * localUvY);
         }
 
         return ResolveSpriteAtlasUv(localUvX, localUvY, sprite.TextureIndex);

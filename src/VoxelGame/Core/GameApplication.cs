@@ -66,17 +66,17 @@ public sealed class GameApplication : IDisposable
     private const float MaxGameplayDeltaSeconds = 1f / 15f;
     private const int MainMenuSingleplayerIndex = 0;
     private const int MainMenuSettingsIndex = 1;
-    private const int MainMenuBodyTypeIndex = 2;
-    private const int MainMenuLoadSkinIndex = 3;
-    private const int MainMenuApplySkinIndex = 4;
-    private const int MainMenuExitIndex = 5;
+    private const int MainMenuExitIndex = 2;
     private const int PauseMenuSettingsIndex = 0;
     private const int PauseMenuExitToMainMenuIndex = 1;
     private const int SingleplayerCreateIndex = 0;
     private const int SingleplayerLoadIndex = 1;
     private const int SingleplayerDeleteIndex = 2;
     private const int SingleplayerBackIndex = 3;
-    private const int SettingsBackIndex = 0;
+    private const int SettingsBodyTypeIndex = 0;
+    private const int SettingsLoadSkinIndex = 1;
+    private const int SettingsApplySkinIndex = 2;
+    private const int SettingsBackIndex = 3;
     private const int CreateWorldConfirmIndex = 0;
     private const int CreateWorldBackIndex = 1;
     private const int MaxWorldNameLength = 32;
@@ -379,14 +379,24 @@ public sealed class GameApplication : IDisposable
             ClearMenuStatus();
         }
 
+        if (_input.IsKeyPressedThisFrame(Key.Up) || _input.IsKeyPressedThisFrame(Key.W))
+        {
+            _settingsActionIndex = (_settingsActionIndex + SettingsBackIndex) % (SettingsBackIndex + 1);
+        }
+
+        if (_input.IsKeyPressedThisFrame(Key.Down) || _input.IsKeyPressedThisFrame(Key.S))
+        {
+            _settingsActionIndex = (_settingsActionIndex + 1) % (SettingsBackIndex + 1);
+        }
+
         if (_input.IsKeyPressedThisFrame(Key.Enter) || _input.IsKeyPressedThisFrame(Key.Space))
         {
-            CloseSettingsMenu();
+            ActivateSettingsAction(_settingsActionIndex);
         }
 
         if (_input.LeftPressedThisFrame && hoveredAction.HasValue)
         {
-            CloseSettingsMenu();
+            ActivateSettingsAction(hoveredAction.Value);
         }
 
         if (_input.ExitRequested)
@@ -473,24 +483,6 @@ public sealed class GameApplication : IDisposable
             return;
         }
 
-        if (menuIndex == MainMenuBodyTypeIndex)
-        {
-            TogglePlayerBodyType();
-            return;
-        }
-
-        if (menuIndex == MainMenuLoadSkinIndex)
-        {
-            PickPlayerSkinFromMenu();
-            return;
-        }
-
-        if (menuIndex == MainMenuApplySkinIndex)
-        {
-            ApplyPendingPlayerSkin();
-            return;
-        }
-
         _window.Close();
     }
 
@@ -537,6 +529,26 @@ public sealed class GameApplication : IDisposable
         }
 
         OpenSingleplayerMenu();
+    }
+
+    private void ActivateSettingsAction(int actionIndex)
+    {
+        _settingsActionIndex = actionIndex;
+        switch (actionIndex)
+        {
+            case SettingsBodyTypeIndex:
+                TogglePlayerBodyType();
+                return;
+            case SettingsLoadSkinIndex:
+                PickPlayerSkinFromMenu();
+                return;
+            case SettingsApplySkinIndex:
+                ApplyPendingPlayerSkin();
+                return;
+            case SettingsBackIndex:
+                CloseSettingsMenu();
+                return;
+        }
     }
 
     private void HandleBlockInteraction(float dt)
@@ -729,7 +741,7 @@ public sealed class GameApplication : IDisposable
             MenuScreen.Main => "ANCIENT ARCANE SANDBOX",
             MenuScreen.Pause => "THE WORLD WAITS IN ARCANE STASIS",
             MenuScreen.Singleplayer => _availableWorlds.Count == 0 ? "NO WORLDS FOUND" : "SELECT A WORLD",
-            MenuScreen.Settings => _mode == GameMode.Paused ? "TUNE VIEW WHILE PAUSED" : "TUNE WORLD VIEW",
+            MenuScreen.Settings => _mode == GameMode.Paused ? "VIEW AND PLAYER APPEARANCE" : "WORLD VIEW AND PLAYER APPEARANCE",
             MenuScreen.CreateWorld => "ENTER WORLD NAME",
             _ => string.Empty
         };
@@ -857,7 +869,7 @@ public sealed class GameApplication : IDisposable
     {
         _menuScreen = MenuScreen.Settings;
         _settingsBackScreen = backScreen;
-        _settingsActionIndex = SettingsBackIndex;
+        _settingsActionIndex = SettingsBodyTypeIndex;
         ClearMenuStatus();
     }
 

@@ -183,6 +183,8 @@ internal unsafe sealed class VulkanImmediatePreview
 
     private void DrawMainMenuBackdrop(CommandBuffer commandBuffer, Extent2D extent, int width, int height)
     {
+        // Main menu background and logo are rendered by the GPU sprite path in VulkanRenderer.
+        // Drawing a fullscreen overlay here hides them and also reintroduces unnecessary HUD work.
     }
 
     private void DrawPauseBackdrop(CommandBuffer commandBuffer, Extent2D extent, RenderScene scene, int width, int height)
@@ -252,9 +254,6 @@ internal unsafe sealed class VulkanImmediatePreview
         {
             "SINGLEPLAYER",
             "SETTINGS",
-            scene.Hud.MenuPlayerBodyType == PlayerBodyType.Slim ? "BODY SLIM" : "BODY NORMAL",
-            "LOAD SKIN",
-            "APPLY SKIN",
             "EXIT"
         };
         for (var i = 0; i < options.Length; i++)
@@ -422,7 +421,24 @@ internal unsafe sealed class VulkanImmediatePreview
         var valueText = $"{scene.Hud.MenuRenderDistance} CHUNKS";
         DrawText(commandBuffer, extent, valueText, layout.RenderDistanceBounds.X + 12, layout.RenderDistanceBounds.Y + 10, layout.Scale, new Rgba(0.90f, 1f, 0.86f, 1f));
         DrawSlider(commandBuffer, extent, layout.SliderBounds, scene.Hud.MenuRenderDistance, 1, 12);
-        DrawMenuButton(commandBuffer, extent, layout.BackButton.Bounds, "BACK", layout.Scale, scene.Hud.MenuSelectedActionIndex == 0);
+
+        var bodyText = scene.Hud.MenuPlayerBodyType == PlayerBodyType.Slim ? "BODY TYPE: SLIM" : "BODY TYPE: NORMAL";
+        var skinText = string.IsNullOrWhiteSpace(scene.Hud.MenuSkinText) ? "SKIN: DEFAULT" : $"SKIN: {scene.Hud.MenuSkinText}";
+        DrawText(commandBuffer, extent, bodyText, layout.RenderDistanceBounds.X, layout.RenderDistanceBounds.Bottom + 18, 2, new Rgba(0.72f, 0.78f, 0.82f, 1f));
+        DrawText(commandBuffer, extent, skinText, layout.RenderDistanceBounds.X, layout.RenderDistanceBounds.Bottom + 42, 2, scene.Hud.MenuSkinReadyToApply ? new Rgba(0.92f, 0.78f, 0.44f, 1f) : new Rgba(0.64f, 0.68f, 0.74f, 1f));
+
+        var actions = new[]
+        {
+            scene.Hud.MenuPlayerBodyType == PlayerBodyType.Slim ? "SWITCH TO NORMAL" : "SWITCH TO SLIM",
+            "LOAD SKIN",
+            "APPLY SKIN",
+            "BACK"
+        };
+
+        for (var i = 0; i < layout.Buttons.Count; i++)
+        {
+            DrawMenuButton(commandBuffer, extent, layout.Buttons[i].Bounds, actions[i], layout.Scale, scene.Hud.MenuSelectedActionIndex == i);
+        }
     }
 
     private void DrawSlider(CommandBuffer commandBuffer, Extent2D extent, UiRect bounds, int value, int min, int max)
